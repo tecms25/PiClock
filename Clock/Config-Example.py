@@ -14,51 +14,39 @@ location = LatLng(primary_coordinates[0], primary_coordinates[1])
 radar_location = LatLng(primary_coordinates[0], primary_coordinates[1])
 
 noaastream = 'http://www.urberg.net:8000/tim273/edina'
-background = 'images/clockbackground-kevin.png'
-squares1 = 'images/squares1-kevin.png'
-squares2 = 'images/squares2-kevin.png'
+background = 'images/mesa.jpg'
+squares1 = 'images/squares1-kevin.png.bak'
+squares2 = 'images/squares2-kevin.png.bak'
 icons = 'icons-lightblue'
-textcolor = '#bef'
+textcolor = '#FFFFFF'
 clockface = 'images/clockface3.png'
 hourhand = 'images/hourhand.png'
 minhand = 'images/minhand.png'
 sechand = 'images/sechand.png'
 
 # SlideShow
-useslideshow = 0  # 1 to enable, 0 to disable
-slide_time = 305  # in seconds, 3600 per hour
-slides = 'images/slideshow'  # the path to your local images
+useslideshow = 1  # 1 to enable, 0 to disable
+slide_time = 600  # in seconds, 3600 per hour
 slide_bg_color = '#000'  # https://htmlcolorcodes.com/  black #000
+slideshow_url = 'https://raw.githubusercontent.com/tecms25/PiClock_Slideshows/refs/heads/main/home1_slideshow.txt' # must be text file, one image per line
 
-digital = 0  # 1 = Digital Clock, 0 = Analog Clock
-
-# Goes with light blue config (like the default one)
-digitalcolor = '#50CBEB'
-digitalformat = '{0:%I:%M\n%S %p}'  # Format of the digital clock face
-digitalsize = 200
-
-# The above example shows in this way:
-#  https://github.com/n0bel/PiClock/blob/master/Documentation/Digital%20Clock%20v1.jpg
-# (specifications of the time string are documented here:
-#  https://docs.python.org/3/library/time.html#time.strftime)
-
-# digitalformat = '{0:%I:%M}'
-# digitalsize = 250
-# The above example shows in this way:
-# https://github.com/n0bel/PiClock/blob/master/Documentation/Digital%20Clock%20v2.jpg
-
-digitalformat2 = '{0:%H:%M:%S}'  # Format of the digital time on second screen
+# Set to Digital Mode
+digital = 1  # 1 = Digital Clock, 0 = Analog Clock
+digitalcolor = '#FFFFFF' #Color of the text
+digitalformat = '{0:%-I:%M%p}'  # Format of the digital clock face
+digitalsize = 150 # Font Size of Clock
+digitalformat2 = '{0:%-I:%M:%S %p}'  # Format of the digital time on second screen
 
 # Mapbox map styles, need API key (mbapi in ApiKeys.py)
 # If no Mapbox API is set, Google Maps are used
-map_base = 'bcurley/cj712peyz0bwr2sqfndbggupb'  # Custom dark Mapbox style for land and water only (bottom layer that goes below weather radar)
-map_overlay = 'bcurley/cj712r01c0bw62rm9isme3j8c'  # Custom Mapbox style for labels, roads, and borders only (top layer that goes above weather radar)
+map_base = 'andrewhover/cm3f80lgn001o01qv6vvk1rtq'  # Custom dark Mapbox style for land and water only (bottom layer that goes below weather radar)
+# map_overlay = 'bcurley/cj712r01c0bw62rm9isme3j8c'  # Custom Mapbox style for labels, roads, and borders only (top layer that goes above weather radar)
 # map_base = 'mapbox/satellite-streets-v12'  # Uncomment for standard Mapbox Satellite Streets style, and comment/remove the custom style
 # map_base = 'mapbox/streets-v12'  # Uncomment for standard Mapbox Streets style, and comment/remove the custom style
 # map_base = 'mapbox/outdoors-v12'  # Uncomment for standard Mapbox Outdoors style, and comment/remove the custom style
-# map_base = 'mapbox/dark-v11'  # Uncomment for standard Mapbox Dark style, and comment/remove the custom style
+# map_base = 'andrewhover/cm3f6hann001u01s13wl6hf7a'  # Uncomment for standard Mapbox Dark style, and comment/remove the custom style
 # map_base = 'mapbox/cj5l80zrp29942rmtg0zctjto'  # Mapbox calls this map style 'Decimal'
-# map_overlay = ''  # Uncomment and leave blank if using standard Mapbox style, and comment/remove the custom style
+map_overlay = 'andrewhover/cm3f7fhze001i01ry1o3m600s'  # Uncomment and leave blank if using standard Mapbox style, and comment/remove the custom style
 
 # For more Mapbox styles, see https://docs.mapbox.com/api/maps/styles/
 # To create custom Mapbox styles, sign-in at https://studio.mapbox.com/
@@ -68,18 +56,16 @@ map_overlay = 'bcurley/cj712r01c0bw62rm9isme3j8c'  # Custom Mapbox style for lab
 # Standard Mapbox maps will look like 'mapbox/streets-v12'
 # User created Mapbox maps will look like 'user-name/map-identifier'
 
+# Localization Variables
 metric = 0  # 0 = English, 1 = Metric
-radar_refresh = 10  # minutes
-weather_refresh = 30  # minutes
-# Wind in degrees instead of cardinal 0 = cardinal, 1 = degrees
-wind_degrees = 0
-# Override pressure units in millibars, mbar, instead of inches Mercury, inHg, (0 = inHg, 1 = mbar)
-# or use metric setting from above
-pressure_mbar = metric
+radar_refresh = 10  # Radar refresh interval in minutes
+weather_refresh = 15  # Current and Forecast WX refresh interval in minutes
+wind_degrees = 0 # Wind in 360 degrees instead of cardinal 0 = cardinal, 1 = degrees
+pressure_mbar = 0 # Override pressure units in millibars, mbar, instead of inches Mercury, inHg, (0 = inHg, 1 = mbar)
 
-# gives all text additional attributes using QT style notation
+# gives all text additional attributes using PyQT attributes
 # example: fontattr = 'font-weight: bold; '
-fontattr = ''
+fontattr = 'font-weight: bold;'
 
 # These are to dim the radar images, if needed.
 # see and try Config-Example-Bedside.py
@@ -111,16 +97,16 @@ Language = 'EN'
 DateLocale = ''
 
 # Language specific wording
-LPressure = 'Pressure '
-LHumidity = 'Humidity '
-LWind = 'Wind '
-Lgusting = ' gust '
-LFeelslike = 'Feels like '
+LPressure = 'Pressure: '
+LHumidity = 'Humidity: '
+LWind = 'Wind: '
+Lgusting = ' Gusts: '
+LFeelslike = 'Feels Like: '
 LPrecip1hr = ' Precip 1hr: '
 LToday = 'Today: '
 LSunRise = 'Sun Rise: '
-LSet = ' Set: '
-LMoonPhase = ' Moon: '
+LSet = ' | Set: '
+LMoonPhase = ' | Moon: '
 LInsideTemp = 'Inside Temp '
 LRain = ' Rain: '
 LSnow = ' Snow: '
@@ -172,10 +158,10 @@ Ltm_code_map = {
 # LatLng(44.9764016,-93.2486732),
 radar1 = {
     'center': radar_location,  # the center of your radar block
-    'zoom': 7,  # this is a maps zoom factor, bigger = smaller area
+    'zoom': 10,  # this is a maps zoom factor, bigger = smaller area
     'basemap': map_base,  # Mapbox style for standard map or custom map with land and water only
     'overlay': map_overlay,  # Mapbox style for labels, roads, and borders only
-    'color': 6,  # rainviewer radar color scheme:
+    'color': 4,  # rainviewer radar color scheme:
     # https://www.rainviewer.com/api/color-schemes.html
     'smooth': 1,  # rainviewer radar smoothing
     'snow': 1,  # rainviewer radar show snow as different color
@@ -192,10 +178,10 @@ radar1 = {
 
 radar2 = {
     'center': radar_location,
-    'zoom': 11,
+    'zoom': 8,
     'basemap': map_base,
     'overlay': map_overlay,
-    'color': 6,
+    'color': 4,
     'smooth': 1,
     'snow': 1,
     'markers': (
@@ -211,10 +197,10 @@ radar2 = {
 
 radar3 = {
     'center': radar_location,
-    'zoom': 7,
+    'zoom': 5,
     'basemap': map_base,
     'overlay': map_overlay,
-    'color': 6,
+    'color': 4,
     'smooth': 1,
     'snow': 1,
     'markers': (
@@ -230,10 +216,10 @@ radar3 = {
 
 radar4 = {
     'center': radar_location,
-    'zoom': 11,
+    'zoom': 7,
     'basemap': map_base,
     'overlay': map_overlay,
-    'color': 6,
+    'color': 4,
     'smooth': 1,
     'snow': 1,
     'markers': (

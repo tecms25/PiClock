@@ -11,6 +11,7 @@ import signal
 import sys
 import time
 import traceback
+import requests
 from subprocess import Popen
 
 import dateutil.parser
@@ -269,9 +270,9 @@ def tick():
         sunset = sun.sunset(dt)
         bottomtext = ''
         bottomtext += (Config.LSunRise +
-                       '{0:%H:%M}'.format(sunrise) +
+                       '{0:%-I:%M %p}'.format(sunrise) +
                        Config.LSet +
-                       '{0:%H:%M}'.format(sunset))
+                       '{0:%-I:%M %p}'.format(sunset))
         bottomtext += (Config.LMoonPhase + phase(moon_phase()))
         bottom.setText(bottomtext)
 
@@ -414,8 +415,8 @@ def wxfinished_owm_onecall():
     global wxicon2, temper2, wxdesc2, attribution
     global owmonecall
 
-    attribution.setText('OpenWeatherMap.org')
-    attribution2.setText('OpenWeatherMap.org')
+    attribution.setText('')
+    attribution2.setText('')
 
     wxstr = str(wxreply.readAll(), 'utf-8')
 
@@ -497,7 +498,7 @@ def wxfinished_owm_onecall():
             Qt.SmoothTransformation))
         wx = fl.findChild(QtWidgets.QLabel, 'wx')
         day = fl.findChild(QtWidgets.QLabel, 'day')
-        day.setText('{0:%A %I:%M%p}'.format(dt))
+        day.setText('{0:%A %I:%M %p}'.format(dt))
         s = ''
         pop = 0
         ptype = ''
@@ -643,19 +644,19 @@ def wxfinished_owm_current():
     else:
         temper.setText('%.1f' % (f['main']['temp']) + u'°F')
         temper2.setText('%.1f' % (f['main']['temp']) + u'°F')
-        w = (Config.LWind + wd + ' ' + '%.1f' % (f['wind']['speed']) + 'mph')
+        w = (Config.LWind + wd + ' ' + '%.1f' % (f['wind']['speed']) + ' mph |')
         if 'gust' in f['wind']:
-            w += (Config.Lgusting + '%.1f' % (f['wind']['gust']) + 'mph')
+            w += (Config.Lgusting + '%.1f' % (f['wind']['gust']) + ' mph')
         feelslike.setText(Config.LFeelslike + '%.1f' % (f['main']['feels_like']) + u'°F')
 
     if Config.pressure_mbar:
         press.setText(Config.LPressure + '%.1f' % f['main']['pressure'] + 'mbar')
     else:
-        press.setText(Config.LPressure + '%.2f' % mbar2inhg(f['main']['pressure']) + 'inHg')
+        press.setText(Config.LPressure + '%.2f' % mbar2inhg(f['main']['pressure']) + 'in')
 
     wind.setText(w)
     humidity.setText(Config.LHumidity + '%.0f%%' % (f['main']['humidity']))
-    wdate.setText('{0:%H:%M %Z}'.format(dt))
+    wdate.setText(''.format(dt))
 
 
 def wxfinished_owm_forecast():
@@ -663,8 +664,8 @@ def wxfinished_owm_forecast():
     global attribution
     global tzlatlng
 
-    attribution.setText('OpenWeatherMap.org')
-    attribution2.setText('OpenWeatherMap.org')
+    attribution.setText('')
+    attribution2.setText('')
 
     wxstr = str(wxreplyf.readAll(), 'utf-8')
 
@@ -696,7 +697,7 @@ def wxfinished_owm_forecast():
             Qt.SmoothTransformation))
         wx = fl.findChild(QtWidgets.QLabel, "wx")
         day = fl.findChild(QtWidgets.QLabel, "day")
-        day.setText("{0:%A %I:%M%p}".format(dt))
+        day.setText("{0:%A %I:%M %p}".format(dt))
         f2 = f['main']
         s = ''
         pop = 0
@@ -941,27 +942,27 @@ def wxfinished_tm_current():
         temper2.setText('%.1f' % (f['values']['temperature']) + u'°F')
         wind.setText(Config.LWind +
                      wd + ' ' +
-                     '%.1f' % (f['values']['windSpeed']) + 'mph' +
+                     '%.1f' % (f['values']['windSpeed']) + ' mph |' +
                      Config.Lgusting +
-                     '%.1f' % (f['values']['windGust']) + 'mph')
+                     '%.1f' % (f['values']['windGust']) + ' mph')
         feelslike.setText(Config.LFeelslike +
                           '%.1f' % (f['values']['temperatureApparent']) + u'°F')
 
     if Config.pressure_mbar:
         press.setText(Config.LPressure + '%.1f' % inhg2mbar(f['values']['pressureSeaLevel']) + 'mbar')
     else:
-        press.setText(Config.LPressure + '%.2f' % (f['values']['pressureSeaLevel']) + 'inHg')
+        press.setText(Config.LPressure + '%.2f' % (f['values']['pressureSeaLevel']) + ' inHg')
 
     humidity.setText(Config.LHumidity + '%.0f%%' % (f['values']['humidity']))
-    wdate.setText('{0:%H:%M %Z}'.format(dt))
+    wdate.setText('Last Updated: {0:%-I:%M %p}'.format(dt))
 
 
 def wxfinished_tm_hourly():
     global wxreply2, forecast
     global daytime, attribution
 
-    attribution.setText('Tomorrow.io')
-    attribution2.setText('Tomorrow.io')
+    attribution.setText('')
+    attribution2.setText('')
 
     wxstr2 = str(wxreply2.readAll(), 'utf-8')
 
@@ -1006,7 +1007,7 @@ def wxfinished_tm_hourly():
             Qt.SmoothTransformation))
         wx = fl.findChild(QtWidgets.QLabel, 'wx')
         day = fl.findChild(QtWidgets.QLabel, 'day')
-        day.setText('{0:%A %I:%M%p}'.format(dt))
+        day.setText('{0:%A %-I:%M %p} '.format(dt))
         s = ''
         pop = float(f['values']['precipitationProbability'])
         ptype = f['values']['precipitationType']
@@ -1014,26 +1015,27 @@ def wxfinished_tm_hourly():
             ptype = ''
         paccum = f['values']['precipitationIntensity']
 
-        if pop > 0.0 or ptype != '':
-            s += '%.0f' % pop + '% '
+        if pop >= 0.0 or ptype != '':
+            s += 'Precip: ' + '%.0f' % pop + '%\n'
+
         if Config.metric:
             if ptype == 2:
                 if paccum > 0.1:
-                    s += Config.LSnow + '%.1f' % inches2mm(paccum) + 'mm/hr '
+                    s += Config.LSnow + '%.1f' % inches2mm(paccum) + 'mm/hr\n'
             else:
                 if paccum > 0.1:
-                    s += Config.LRain + '%.1f' % inches2mm(paccum) + 'mm/hr '
-            s += '%.0f' % tempf2tempc(f['values']['temperature']) + u'°C'
+                    s += Config.LRain + '%.1f' % inches2mm(paccum) + 'mm/hr\n'
+            s += 'Temp: ' + '%.0f' % tempf2tempc(f['values']['temperature']) + u'°C'
         else:
             if ptype == 2:
                 if paccum > 0.1:
-                    s += Config.LSnow + '%.1f' % paccum + 'in/hr '
+                    s += Config.LSnow + '%.1f' % paccum + 'in/hr\n'
             else:
                 if paccum > 0.1:
-                    s += Config.LRain + '%.1f' % paccum + 'in/hr '
-            s += '%.0f' % (f['values']['temperature']) + u'°F'
+                    s += Config.LRain + '%.1f' % paccum + 'in/hr\n'
+            s += 'Temp: ' + '%.0f' % (f['values']['temperature']) + u'°F'
 
-        wx.setStyleSheet('#wx { font-size: ' + str(int(19 * xscale * Config.fontmult)) + 'px; }')
+        wx.setStyleSheet('#wx { font-size: ' + str(int(17 * xscale * Config.fontmult)) + 'px; }')
         wx.setText(tm_code_map[f['values']['weatherCode']] + '\n' + s)
 
 
@@ -1074,7 +1076,7 @@ def wxfinished_tm_daily():
                 Qt.SmoothTransformation))
             wx = fl.findChild(QtWidgets.QLabel, 'wx')
             day = fl.findChild(QtWidgets.QLabel, 'day')
-            day.setText('{0:%A %m/%d}'.format(dateutil.parser.parse(f['startTime'])
+            day.setText('{0:%A %m/%d} '.format(dateutil.parser.parse(f['startTime'])
                                               .astimezone(tzlocal.get_localzone())))
             s = ''
             pop = float(f['values']['precipitationProbability'])
@@ -1115,28 +1117,28 @@ def wxfinished_tm_daily():
             if '8000' in wc:
                 ptype = 'rain'
 
-            if pop > 0.05 or ptype != '':
-                s += '%.0f' % pop + '% '
+            if pop >= 0 or ptype != '':
+                s += 'Precip: ' + '%.0f' % pop + '%\n'
             if Config.metric:
                 if ptype == 'snow':
                     if paccum > 0.1:
-                        s += Config.LSnow + '%.1f' % inches2mm(paccum) + 'mm/hr '
+                        s += Config.LSnow + '%.1f' % inches2mm(paccum) + 'mm/hr\n'
                 else:
                     if paccum > 0.1:
-                        s += Config.LRain + '%.1f' % inches2mm(paccum) + 'mm/hr '
-                s += '%.0f' % tempf2tempc(f['values']['temperatureMax']) + '/' + \
+                        s += Config.LRain + '%.1f' % inches2mm(paccum) + 'mm/hr\n'
+                s += 'Temp: ' + '%.0f' % tempf2tempc(f['values']['temperatureMax']) + '/' + \
                      '%.0f' % tempf2tempc(f['values']['temperatureMin']) + u'°C'
             else:
                 if ptype == 'snow':
                     if paccum > 0.1:
-                        s += Config.LSnow + '%.1f' % paccum + 'in/hr '
+                        s += Config.LSnow + '%.1f' % paccum + 'in/hr\n'
                 else:
                     if paccum > 0.1:
-                        s += Config.LRain + '%.1f' % paccum + 'in/hr '
-                s += '%.0f' % f['values']['temperatureMax'] + '/' + \
+                        s += Config.LRain + '%.1f' % paccum + 'in/hr\n'
+                s += 'Temp: ' + '%.0f' % f['values']['temperatureMax'] + '/' + \
                      '%.0f' % f['values']['temperatureMin'] + u'°F'
 
-            wx.setStyleSheet('#wx { font-size: ' + str(int(19 * xscale * Config.fontmult)) + 'px; }')
+            wx.setStyleSheet('#wx { font-size: ' + str(int(17 * xscale * Config.fontmult)) + 'px; }')
             wx.setText(tm_code_map[f['values']['weatherCode']] + '\n' + s)
         except IndexError:
             print('WARNING:', traceback.format_exc())
@@ -1352,7 +1354,7 @@ def wxfinished_metar():
     humidity.setText(humidity_str)
     wind.setText(wind_speed_str)
     feelslike.setText(feelslike_str)
-    wdate.setText('{0:%H:%M %Z} {1}'.format(dt, Config.METAR))
+    wdate.setText('0:%H:%M %Z} {1}'.format(dt, Config.METAR))
 
 
 def getallwx():
@@ -1582,23 +1584,38 @@ class SlideShow(QtWidgets.QLabel):
     def switch_image(self):
         if self.img_list:
             if not self.pause:
-                self.count += self.img_inc
-                if self.count >= len(self.img_list):
-                    self.count = 0
+                self.count = (self.count + 1) % len(self.img_list)  # Move to the next image
                 self.show_image(self.img_list[self.count])
-                self.img_inc = 1
 
-    def show_image(self, image):
-        image = QtGui.QImage(image)
+    def show_image(self, image_url):
+        try:
+            # Download the image from the URL
+            print(f"SLIDESHOW: Attempting to load image: {image_url}")  # Log the URL
+            image_data = requests.get(image_url).content
+            image = QtGui.QImage()
+            image.loadFromData(image_data)
 
-        bg = QtGui.QPixmap.fromImage(image)
-        self.setPixmap(bg.scaled(
-            self.size(),
-            QtCore.Qt.KeepAspectRatio,
-            QtCore.Qt.SmoothTransformation))
+            bg = QtGui.QPixmap.fromImage(image)
+            self.setPixmap(bg.scaled(
+                self.size(),
+                QtCore.Qt.KeepAspectRatio,
+                QtCore.Qt.SmoothTransformation))
+        except Exception as e:
+            print(f"ERROR: Unable to load image from {image_url}: {e}")
 
     def get_images(self):
-        self.get_local(Config.slides)
+        try:
+            # Fetch the list of image URLs from the web
+            response = requests.get(Config.slideshow_url)
+            response.raise_for_status()  # Raise an error if the request fails
+            content = response.text
+
+            # Parse the URLs (assuming one URL per line)
+            self.img_list = [line.strip() for line in content.splitlines() if line.strip()]
+            random.shuffle(self.img_list)  # Shuffle the image list for random order
+        except Exception as e:
+            print(f"ERROR: Unable to fetch image list: {e}")
+            self.img_list = []  # Reset the list if fetching fails
 
     def play_pause(self):
         if not self.pause:
@@ -1612,24 +1629,13 @@ class SlideShow(QtWidgets.QLabel):
         self.switch_image()
         self.timer.start()
 
-    def get_local(self, path):
-        try:
-            dir_content = os.listdir(path)
-            for each in dir_content:
-                full_file = os.path.join(path, each)
-                if os.path.isfile(full_file) and (full_file.lower().endswith('png')
-                                                  or full_file.lower().endswith('jpg')):
-                    self.img_list.append(full_file)
-        except OSError:
-            print('ERROR:', traceback.format_exc())
-
 
 class Radar(QtWidgets.QLabel):
 
     def __init__(self, parent, radar, rect, myname):
         self.myname = myname
         self.rect = rect
-        self.anim = 5
+        self.anim = 10
         self.zoom = radar['zoom']
         self.point = radar['center']
         self.radar = radar
@@ -1847,7 +1853,7 @@ class Radar(QtWidgets.QLabel):
         ii3.fill(Qt.transparent)
         painter2 = QPainter()
         painter2.begin(ii3)
-        timestamp = '{0:%H:%M} RainViewer.com'.format(datetime.datetime.fromtimestamp(self.getTime))
+        timestamp = 'Radar Time: {0:%-I:%M %p}'.format(datetime.datetime.fromtimestamp(self.getTime))
         painter2.setPen(QColor(63, 63, 63, 255))
         painter2.setFont(QFont("Arial", pointSize=8, weight=75))
         painter2.setRenderHint(QPainter.TextAntialiasing)
@@ -2167,7 +2173,7 @@ except AttributeError:
 try:
     Config.weather_refresh
 except AttributeError:
-    Config.weather_refresh = 30  # minutes
+    Config.weather_refresh = 15  # minutes
 
 try:
     Config.radar_refresh
@@ -2203,7 +2209,7 @@ except AttributeError:
 try:
     Config.digital
 except AttributeError:
-    Config.digital = 0
+    Config.digital = 1
 
 try:
     Config.Language
@@ -2404,6 +2410,17 @@ else:
     glow.setColor(QColor(dcolor))
     clockface.setGraphicsEffect(glow)
 
+# Create a drop shadow effect
+shadow = QtWidgets.QGraphicsDropShadowEffect(clockface)
+shadow.setColor(QtGui.QColor(0, 0, 0))  # Black shadow
+shadow.setBlurRadius(10)                # Blur for smooth edges
+shadow.setOffset(2, 2)                  # Offset for the shadow (x, y)
+
+# Apply the shadow effect to the label
+clockface.setGraphicsEffect(shadow)
+
+
+
 radar1rect = QtCore.QRect(int(3 * xscale), int(344 * yscale), int(300 * xscale), int(275 * yscale))
 objradar1 = Radar(foreGround, Config.radar1, radar1rect, 'radar1')
 
@@ -2428,6 +2445,16 @@ datex.setStyleSheet('#datex { font-family:sans-serif; color: ' +
 datex.setAlignment(Qt.AlignHCenter | Qt.AlignTop)
 datex.setGeometry(0, 0, width, int(100 * yscale))
 
+# Create a drop shadow effect
+shadow = QtWidgets.QGraphicsDropShadowEffect(datex)
+shadow.setColor(QtGui.QColor(0, 0, 0))  # Black shadow
+shadow.setBlurRadius(10)                # Blur for smooth edges
+shadow.setOffset(2, 2)                  # Offset for the shadow (x, y)
+
+# Apply the shadow effect to the label
+datex.setGraphicsEffect(shadow)
+
+
 datex2 = QtWidgets.QLabel(frame2)
 datex2.setObjectName('datex2')
 datex2.setStyleSheet('#datex2 { font-family:sans-serif; color: ' +
@@ -2438,6 +2465,17 @@ datex2.setStyleSheet('#datex2 { font-family:sans-serif; color: ' +
                      '}')
 datex2.setAlignment(Qt.AlignHCenter | Qt.AlignTop)
 datex2.setGeometry(int(800 * xscale), int(760 * yscale), int(640 * xscale), 100)
+
+# Create a drop shadow effect
+shadow = QtWidgets.QGraphicsDropShadowEffect(datex2)
+shadow.setColor(QtGui.QColor(0, 0, 0))  # Black shadow
+shadow.setBlurRadius(10)                # Blur for smooth edges
+shadow.setOffset(2, 2)                  # Offset for the shadow (x, y)
+
+# Apply the shadow effect to the label
+datex2.setGraphicsEffect(shadow)
+
+
 datey2 = QtWidgets.QLabel(frame2)
 datey2.setObjectName('datey2')
 datey2.setStyleSheet('#datey2 { font-family:sans-serif; color: ' +
@@ -2450,7 +2488,17 @@ datey2.setStyleSheet('#datey2 { font-family:sans-serif; color: ' +
 datey2.setAlignment(Qt.AlignHCenter | Qt.AlignTop)
 datey2.setGeometry(int(800 * xscale), int(820 * yscale), int(640 * xscale), 100)
 
-ypos = -25
+# Create a drop shadow effect
+shadow = QtWidgets.QGraphicsDropShadowEffect(datey2)
+shadow.setColor(QtGui.QColor(0, 0, 0))  # Black shadow
+shadow.setBlurRadius(10)                # Blur for smooth edges
+shadow.setOffset(2, 2)                  # Offset for the shadow (x, y)
+
+# Apply the shadow effect to the label
+datey2.setGraphicsEffect(shadow)
+
+
+ypos = -10
 wxicon = QtWidgets.QLabel(foreGround)
 wxicon.setObjectName('wxicon')
 wxicon.setStyleSheet('#wxicon { background-color: transparent; }')
@@ -2487,7 +2535,7 @@ attribution2.setStyleSheet('#attribution2 { ' +
 attribution2.setAlignment(Qt.AlignTop)
 attribution2.setGeometry(int(6 * xscale), int(880 * yscale), int(130 * xscale), 100)
 
-ypos += 130
+ypos += 140
 wxdesc = QtWidgets.QLabel(foreGround)
 wxdesc.setObjectName('wxdesc')
 wxdesc.setStyleSheet('#wxdesc { background-color: transparent; color: ' +
@@ -2499,6 +2547,16 @@ wxdesc.setStyleSheet('#wxdesc { background-color: transparent; color: ' +
                      '}')
 wxdesc.setAlignment(Qt.AlignHCenter | Qt.AlignTop)
 wxdesc.setGeometry(int(3 * xscale), int(ypos * yscale), int(300 * xscale), 100)
+
+# Create a drop shadow effect
+shadow = QtWidgets.QGraphicsDropShadowEffect(wxdesc)
+shadow.setColor(QtGui.QColor(0, 0, 0))  # Black shadow
+shadow.setBlurRadius(10)                # Blur for smooth edges
+shadow.setOffset(2, 2)                  # Offset for the shadow (x, y)
+
+# Apply the shadow effect to the label
+wxdesc.setGraphicsEffect(shadow)
+
 
 wxdesc2 = QtWidgets.QLabel(frame2)
 wxdesc2.setObjectName('wxdesc2')
@@ -2512,18 +2570,37 @@ wxdesc2.setStyleSheet('#wxdesc2 { background-color: transparent; color: ' +
 wxdesc2.setAlignment(Qt.AlignLeft | Qt.AlignTop)
 wxdesc2.setGeometry(int(400 * xscale), int(800 * yscale), int(400 * xscale), 100)
 
-ypos += 25
+# Create a drop shadow effect
+shadow = QtWidgets.QGraphicsDropShadowEffect(wxdesc2)
+shadow.setColor(QtGui.QColor(0, 0, 0))  # Black shadow
+shadow.setBlurRadius(10)                # Blur for smooth edges
+shadow.setOffset(2, 2)                  # Offset for the shadow (x, y)
+
+# Apply the shadow effect to the label
+wxdesc2.setGraphicsEffect(shadow)
+
+ypos += 33
 temper = QtWidgets.QLabel(foreGround)
 temper.setObjectName('temper')
 temper.setStyleSheet('#temper { background-color: transparent; color: ' +
                      Config.textcolor +
                      '; font-size: ' +
-                     str(int(70 * xscale * Config.fontmult)) +
+                     str(int(50 * xscale * Config.fontmult)) +
                      'px; ' +
                      Config.fontattr +
                      '}')
 temper.setAlignment(Qt.AlignHCenter | Qt.AlignTop)
 temper.setGeometry(int(3 * xscale), int(ypos * yscale), int(300 * xscale), int(100 * yscale))
+
+# Create a drop shadow effect
+shadow = QtWidgets.QGraphicsDropShadowEffect(temper)
+shadow.setColor(QtGui.QColor(0, 0, 0))  # Black shadow
+shadow.setBlurRadius(10)                # Blur for smooth edges
+shadow.setOffset(2, 2)                  # Offset for the shadow (x, y)
+
+# Apply the shadow effect to the label
+temper.setGraphicsEffect(shadow)
+
 
 temper2 = QtWidgets.QLabel(frame2)
 temper2.setObjectName('temper2')
@@ -2537,82 +2614,152 @@ temper2.setStyleSheet('#temper2 { background-color: transparent; color: ' +
 temper2.setAlignment(Qt.AlignHCenter | Qt.AlignTop)
 temper2.setGeometry(int(125 * xscale), int(780 * yscale), int(300 * xscale), 100)
 
-ypos += 80
-press = QtWidgets.QLabel(foreGround)
-press.setObjectName('press')
-press.setStyleSheet('#press { background-color: transparent; color: ' +
-                    Config.textcolor +
-                    '; font-size: ' +
-                    str(int(25 * xscale * Config.fontmult)) +
-                    'px; ' +
-                    Config.fontattr +
-                    '}')
-press.setAlignment(Qt.AlignHCenter | Qt.AlignTop)
-press.setGeometry(int(3 * xscale), int(ypos * yscale), int(300 * xscale), 100)
+# Create a drop shadow effect
+shadow = QtWidgets.QGraphicsDropShadowEffect(temper2)
+shadow.setColor(QtGui.QColor(0, 0, 0))  # Black shadow
+shadow.setBlurRadius(10)                # Blur for smooth edges
+shadow.setOffset(2, 2)                  # Offset for the shadow (x, y)
 
-ypos += 30
+# Apply the shadow effect to the label
+temper2.setGraphicsEffect(shadow)
+
+
+ypos += 58
+feelslike = QtWidgets.QLabel(foreGround)
+feelslike.setObjectName('feelslike')
+feelslike.setStyleSheet('#feelslike { background-color: transparent; color: ' +
+                        Config.textcolor +
+                        '; font-size: ' +
+                        str(int(26 * xscale * Config.fontmult)) +
+                        'px; font-style: italic; ' +  # Add this line to make the font italic
+                        Config.fontattr +
+                        '}')
+feelslike.setAlignment(Qt.AlignHCenter | Qt.AlignTop)
+feelslike.setGeometry(int(3 * xscale), int(ypos * yscale), int(300 * xscale), 100)
+
+# Create a drop shadow effect
+shadow = QtWidgets.QGraphicsDropShadowEffect(feelslike)
+shadow.setColor(QtGui.QColor(0, 0, 0))  # Black shadow
+shadow.setBlurRadius(10)                # Blur for smooth edges
+shadow.setOffset(2, 2)                  # Offset for the shadow (x, y)
+
+# Apply the shadow effect to the label
+feelslike.setGraphicsEffect(shadow)
+
+
+ypos += 35
 humidity = QtWidgets.QLabel(foreGround)
 humidity.setObjectName('humidity')
 humidity.setStyleSheet('#humidity { background-color: transparent; color: ' +
                        Config.textcolor +
                        '; font-size: ' +
-                       str(int(25 * xscale * Config.fontmult)) +
+                       str(int(17 * xscale * Config.fontmult)) +
                        'px; ' +
                        Config.fontattr +
                        '}')
 humidity.setAlignment(Qt.AlignHCenter | Qt.AlignTop)
 humidity.setGeometry(int(3 * xscale), int(ypos * yscale), int(300 * xscale), 100)
 
-ypos += 30
+# Create a drop shadow effect
+shadow = QtWidgets.QGraphicsDropShadowEffect(humidity)
+shadow.setColor(QtGui.QColor(0, 0, 0))  # Black shadow
+shadow.setBlurRadius(10)                # Blur for smooth edges
+shadow.setOffset(2, 2)                  # Offset for the shadow (x, y)
+
+# Apply the shadow effect to the label
+humidity.setGraphicsEffect(shadow)
+
+
+ypos += 22
+press = QtWidgets.QLabel(foreGround)
+press.setObjectName('press')
+press.setStyleSheet('#press { background-color: transparent; color: ' +
+                    Config.textcolor +
+                    '; font-size: ' +
+                    str(int(17 * xscale * Config.fontmult)) +
+                    'px; ' +
+                    Config.fontattr +
+                    '}')
+press.setAlignment(Qt.AlignHCenter | Qt.AlignTop)
+press.setGeometry(int(3 * xscale), int(ypos * yscale), int(300 * xscale), 100)
+
+# Create a drop shadow effect
+shadow = QtWidgets.QGraphicsDropShadowEffect(press)
+shadow.setColor(QtGui.QColor(0, 0, 0))  # Black shadow
+shadow.setBlurRadius(10)                # Blur for smooth edges
+shadow.setOffset(2, 2)                  # Offset for the shadow (x, y)
+
+# Apply the shadow effect to the label
+press.setGraphicsEffect(shadow)
+
+
+ypos += 22
 wind = QtWidgets.QLabel(foreGround)
 wind.setObjectName('wind')
 wind.setStyleSheet('#wind { background-color: transparent; color: ' +
                    Config.textcolor +
                    '; font-size: ' +
-                   str(int(20 * xscale * Config.fontmult)) +
+                   str(int(17 * xscale * Config.fontmult)) +
                    'px; ' +
                    Config.fontattr +
                    '}')
 wind.setAlignment(Qt.AlignHCenter | Qt.AlignTop)
 wind.setGeometry(int(3 * xscale), int(ypos * yscale), int(300 * xscale), 100)
 
-ypos += 20
-feelslike = QtWidgets.QLabel(foreGround)
-feelslike.setObjectName('feelslike')
-feelslike.setStyleSheet('#feelslike { background-color: transparent; color: ' +
-                        Config.textcolor +
-                        '; font-size: ' +
-                        str(int(20 * xscale * Config.fontmult)) +
-                        'px; ' +
-                        Config.fontattr +
-                        '}')
-feelslike.setAlignment(Qt.AlignHCenter | Qt.AlignTop)
-feelslike.setGeometry(int(3 * xscale), int(ypos * yscale), int(300 * xscale), 100)
+# Create a drop shadow effect
+shadow = QtWidgets.QGraphicsDropShadowEffect(wind)
+shadow.setColor(QtGui.QColor(0, 0, 0))  # Black shadow
+shadow.setBlurRadius(10)                # Blur for smooth edges
+shadow.setOffset(2, 2)                  # Offset for the shadow (x, y)
 
-ypos += 20
+# Apply the shadow effect to the label
+wind.setGraphicsEffect(shadow)
+
+
+ypos += 25
 wdate = QtWidgets.QLabel(foreGround)
 wdate.setObjectName('wdate')
 wdate.setStyleSheet('#wdate { background-color: transparent; color: ' +
                     Config.textcolor +
                     '; font-size: ' +
-                    str(int(15 * xscale * Config.fontmult)) +
+                    str(int(11 * xscale * Config.fontmult)) +
                     'px; ' +
                     Config.fontattr +
                     '}')
 wdate.setAlignment(Qt.AlignHCenter | Qt.AlignTop)
 wdate.setGeometry(int(3 * xscale), int(ypos * yscale), int(300 * xscale), 100)
 
+# Create a drop shadow effect
+shadow = QtWidgets.QGraphicsDropShadowEffect(wdate)
+shadow.setColor(QtGui.QColor(0, 0, 0))  # Black shadow
+shadow.setBlurRadius(10)                # Blur for smooth edges
+shadow.setOffset(2, 2)                  # Offset for the shadow (x, y)
+
+# Apply the shadow effect to the label
+wdate.setGraphicsEffect(shadow)
+
+
 bottom = QtWidgets.QLabel(foreGround)
 bottom.setObjectName('bottom')
 bottom.setStyleSheet('#bottom { font-family:sans-serif; color: ' +
                      Config.textcolor +
                      '; background-color: transparent; font-size: ' +
-                     str(int(30 * xscale * Config.fontmult)) +
+                     str(int(24 * xscale * Config.fontmult)) +
                      'px; ' +
                      Config.fontattr +
                      '}')
 bottom.setAlignment(Qt.AlignHCenter | Qt.AlignTop)
 bottom.setGeometry(0, int(height - 50 * yscale), width, int(50 * yscale))
+
+# Create a drop shadow effect
+shadow = QtWidgets.QGraphicsDropShadowEffect(bottom)
+shadow.setColor(QtGui.QColor(0, 0, 0))  # Black shadow
+shadow.setBlurRadius(10)                # Blur for smooth edges
+shadow.setOffset(2, 2)                  # Offset for the shadow (x, y)
+
+# Apply the shadow effect to the label
+bottom.setGraphicsEffect(shadow)
+
 
 temp = QtWidgets.QLabel(foreGround)
 temp.setObjectName('temp')
@@ -2626,6 +2773,16 @@ temp.setStyleSheet('#temp { font-family:sans-serif; color: ' +
 temp.setAlignment(Qt.AlignHCenter | Qt.AlignTop)
 temp.setGeometry(0, int(height - 100 * yscale), width, int(50 * yscale))
 
+# Create a drop shadow effect
+shadow = QtWidgets.QGraphicsDropShadowEffect(temp)
+shadow.setColor(QtGui.QColor(0, 0, 0))  # Black shadow
+shadow.setBlurRadius(10)                # Blur for smooth edges
+shadow.setOffset(2, 2)                  # Offset for the shadow (x, y)
+
+# Apply the shadow effect to the label
+temp.setGraphicsEffect(shadow)
+
+
 owmonecall = True
 tzlatlng = pytz.utc
 forecast = []
@@ -2636,11 +2793,20 @@ for i in range(0, 9):
     lab.setStyleSheet('QWidget { background-color: transparent; color: ' +
                       Config.textcolor +
                       '; font-size: ' +
-                      str(int(20 * xscale * Config.fontmult)) +
+                      str(int(17 * xscale * Config.fontmult)) +
                       'px; ' +
                       Config.fontattr +
                       '}')
+
+
     lab.setGeometry(int(1137 * xscale), int(i * 100 * yscale), int(300 * xscale), int(100 * yscale))
+
+    # Apply shadow to the main label
+    shadow = QtWidgets.QGraphicsDropShadowEffect(lab)
+    shadow.setColor(QtGui.QColor(0, 0, 0))  # Black shadow
+    shadow.setBlurRadius(10)                # Smooth edges
+    shadow.setOffset(2, 2)                  # Shadow offset
+    lab.setGraphicsEffect(shadow)
 
     icon = QtWidgets.QLabel(lab)
     icon.setStyleSheet('#icon { background-color: transparent; }')
@@ -2654,13 +2820,28 @@ for i in range(0, 9):
     wx.setWordWrap(True)
     wx.setObjectName('wx')
 
+    # Apply shadow to the weather description label
+    shadow_wx = QtWidgets.QGraphicsDropShadowEffect(wx)
+    shadow_wx.setColor(QtGui.QColor(0, 0, 0))
+    shadow_wx.setBlurRadius(10)
+    shadow_wx.setOffset(2, 2)
+    wx.setGraphicsEffect(shadow_wx)
+
     day = QtWidgets.QLabel(lab)
     day.setStyleSheet('#day { background-color: transparent; }')
     day.setGeometry(int(100 * xscale), int(75 * yscale), int(200 * xscale), int(25 * yscale))
     day.setAlignment(Qt.AlignRight | Qt.AlignBottom)
     day.setObjectName('day')
 
+    # Apply shadow to the day label
+    shadow_day = QtWidgets.QGraphicsDropShadowEffect(day)
+    shadow_day.setColor(QtGui.QColor(0, 0, 0))
+    shadow_day.setBlurRadius(10)
+    shadow_day.setOffset(2, 2)
+    day.setGraphicsEffect(shadow_day)
+
     forecast.append(lab)
+
 
 manager = QtNetwork.QNetworkAccessManager()
 
