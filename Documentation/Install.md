@@ -11,7 +11,7 @@ image, it should just work. I'm assuming that you already know how to hook
 up your Raspberry Pi, monitor, and keyboard/mouse.   If not, please do a web search
 regarding setting up the basic hardware for your Raspberry Pi.
 
-### Download Raspberry Pi OS and put it on an SD Card
+### Download Raspberry Pi OS (or Ubuntu) and put it on an SD Card
 
 The instructions for doing this are on the following page:
 https://www.raspberrypi.com/documentation/computers/getting-started.html

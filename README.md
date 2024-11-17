@@ -3,16 +3,12 @@
 Fork of PiClock that uses custom dark maps from MapBox, for better contrast 
 between the weather radar and the maps, with an additional map overlay so that 
 rain/snow clouds do not obscure map information, such as labels, borders, and roads.
+Several other UX updates have been added, along with the ability to specify remote images for a slideshow
 
 The radar windows consist of three layers:
  - Bottom layer is a plain MapBox dark map with no labels, borders, or roads.
  - Middle layer is the weather radar imagery.
  - Top layer is a transparent MapBox map with only labels, borders, and roads.
-
-## Screenshots of PiClock with Dark Maps
-![PiClock with dark maps screen 1](Pictures/piclock_dark_maps_screen1.png)
-
-![PiClock with dark maps screen 2](Pictures/piclock_dark_maps_screen2.png)
 
 ## Original PiClock
 A Fancy Clock built around a monitor and a Raspberry Pi
