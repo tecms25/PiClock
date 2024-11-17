@@ -961,7 +961,7 @@ def wxfinished_tm_hourly():
     global wxreply2, forecast
     global daytime, attribution
 
-    attribution.setText('')
+    attribution.setText('Powered By: Tomorrow.io')
     attribution2.setText('')
 
     wxstr2 = str(wxreply2.readAll(), 'utf-8')
@@ -1853,7 +1853,7 @@ class Radar(QtWidgets.QLabel):
         ii3.fill(Qt.transparent)
         painter2 = QPainter()
         painter2.begin(ii3)
-        timestamp = 'Radar Time: {0:%-I:%M %p}'.format(datetime.datetime.fromtimestamp(self.getTime))
+        timestamp = 'RainViewer.com Time: {0:%-I:%M %p}'.format(datetime.datetime.fromtimestamp(self.getTime))
         painter2.setPen(QColor(63, 63, 63, 255))
         painter2.setFont(QFont("Arial", pointSize=8, weight=75))
         painter2.setRenderHint(QPainter.TextAntialiasing)

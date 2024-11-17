@@ -28,7 +28,7 @@ sechand = 'images/sechand.png'
 useslideshow = 1  # 1 to enable, 0 to disable
 slide_time = 600  # in seconds, 3600 per hour
 slide_bg_color = '#000'  # https://htmlcolorcodes.com/  black #000
-slideshow_url = 'https://raw.githubusercontent.com/tecms25/PiClock_Slideshows/refs/heads/main/home1_slideshow.txt' # must be text file, one image per line
+slideshow_url = 'https://example.com/slideshow.txt' # must be plaintext formated, one image URL per line. Github works well for this
 
 # Set to Digital Mode
 digital = 1  # 1 = Digital Clock, 0 = Analog Clock
