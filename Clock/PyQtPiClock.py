@@ -961,7 +961,7 @@ def wxfinished_tm_hourly():
     global wxreply2, forecast
     global daytime, attribution
 
-    attribution.setText('Powered By: Tomorrow.io')
+    attribution.setText('')
     attribution2.setText('')
 
     wxstr2 = str(wxreply2.readAll(), 'utf-8')
@@ -1015,7 +1015,7 @@ def wxfinished_tm_hourly():
             ptype = ''
         paccum = f['values']['precipitationIntensity']
 
-        if pop >= 0.0 or ptype != '':
+        if (pop >= 0.0 or ptype != '') and paccum <= 0.1:  # Only display Precip: percentage if paccum <= 0.1
             s += 'Precip: ' + '%.0f' % pop + '%\n'
 
         if Config.metric:
@@ -1117,29 +1117,29 @@ def wxfinished_tm_daily():
             if '8000' in wc:
                 ptype = 'rain'
 
-            if pop >= 0 or ptype != '':
+            if (pop >= 0.0 or ptype != '') and paccum <= 0.1:  # Only display Precip: percentage if paccum <= 0.1
                 s += 'Precip: ' + '%.0f' % pop + '%\n'
+
             if Config.metric:
-                if ptype == 'snow':
+                if ptype == 2:
                     if paccum > 0.1:
                         s += Config.LSnow + '%.1f' % inches2mm(paccum) + 'mm/hr\n'
                 else:
                     if paccum > 0.1:
                         s += Config.LRain + '%.1f' % inches2mm(paccum) + 'mm/hr\n'
-                s += 'Temp: ' + '%.0f' % tempf2tempc(f['values']['temperatureMax']) + '/' + \
-                     '%.0f' % tempf2tempc(f['values']['temperatureMin']) + u'°C'
+                s += 'Temp: ' + '%.0f' % tempf2tempc(f['values']['temperature']) + u'°C'
             else:
-                if ptype == 'snow':
+                if ptype == 2:
                     if paccum > 0.1:
                         s += Config.LSnow + '%.1f' % paccum + 'in/hr\n'
                 else:
                     if paccum > 0.1:
                         s += Config.LRain + '%.1f' % paccum + 'in/hr\n'
-                s += 'Temp: ' + '%.0f' % f['values']['temperatureMax'] + '/' + \
-                     '%.0f' % f['values']['temperatureMin'] + u'°F'
+                s += 'Temp: ' + '%.0f' % (f['values']['temperature']) + u'°F'
 
             wx.setStyleSheet('#wx { font-size: ' + str(int(17 * xscale * Config.fontmult)) + 'px; }')
             wx.setText(tm_code_map[f['values']['weatherCode']] + '\n' + s)
+
         except IndexError:
             print('WARNING:', traceback.format_exc())
             pass
@@ -1516,15 +1516,18 @@ def qtstart():
         daytime = False
 
     getallwx()
-
     gettemp()
 
-    objradar1.start(Config.radar_refresh * 60)
+    # Start all radar objects
+    radar_refresh_interval = Config.radar_refresh * 60
+    objradar1.start(radar_refresh_interval)
+    objradar2.start(radar_refresh_interval)
+    objradar3.start(radar_refresh_interval)
+    objradar4.start(radar_refresh_interval)
+
+    # Sy wxstart calls for radar objects 1 and 2
     objradar1.wxstart()
-    objradar2.start(Config.radar_refresh * 60)
     objradar2.wxstart()
-    objradar3.start(Config.radar_refresh * 60)
-    objradar4.start(Config.radar_refresh * 60)
 
     ctimer = QtCore.QTimer()
     ctimer.timeout.connect(tick)
@@ -1853,7 +1856,7 @@ class Radar(QtWidgets.QLabel):
         ii3.fill(Qt.transparent)
         painter2 = QPainter()
         painter2.begin(ii3)
-        timestamp = 'RainViewer.com Time: {0:%-I:%M %p}'.format(datetime.datetime.fromtimestamp(self.getTime))
+        timestamp = 'Radar Time: {0:%-I:%M %p}'.format(datetime.datetime.fromtimestamp(self.getTime))
         painter2.setPen(QColor(63, 63, 63, 255))
         painter2.setFont(QFont("Arial", pointSize=8, weight=75))
         painter2.setRenderHint(QPainter.TextAntialiasing)
@@ -2333,22 +2336,6 @@ foreGround = QtWidgets.QFrame(frame1)
 foreGround.setObjectName('foreGround')
 foreGround.setStyleSheet('#foreGround { background-color: transparent; }')
 foreGround.setGeometry(0, 0, width, height)
-
-squares1 = QtWidgets.QFrame(foreGround)
-squares1.setObjectName('squares1')
-squares1.setGeometry(0, int(height - yscale * 600), int(xscale * 340), int(yscale * 600))
-squares1.setStyleSheet(
-    '#squares1 { background-color: transparent; border-image: url(' +
-    Config.squares1 +
-    ') 0 0 0 0 stretch stretch;}')
-
-squares2 = QtWidgets.QFrame(foreGround)
-squares2.setObjectName('squares2')
-squares2.setGeometry(int(width - xscale * 340), 0, int(xscale * 340), int(yscale * 900))
-squares2.setStyleSheet(
-    '#squares2 { background-color: transparent; border-image: url(' +
-    Config.squares2 +
-    ') 0 0 0 0 stretch stretch;}')
 
 if not Config.digital:
     clockface = QtWidgets.QFrame(foreGround)
