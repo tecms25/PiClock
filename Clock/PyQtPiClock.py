@@ -1010,29 +1010,41 @@ def wxfinished_tm_hourly():
         day.setText('{0:%A %-I:%M %p} '.format(dt))
         s = ''
         pop = float(f['values']['precipitationProbability'])
-        ptype = f['values']['precipitationType']
-        if ptype == 0:
-            ptype = ''
-        paccum = f['values']['precipitationIntensity']
+        ptype = float(f['values']['precipitationType'])
+        saccum = float(f['values']['snowAccumulationAvg'])
+        raccum = float(f['values']['rainAccumulationAvg'])
 
-        if (pop >= 0.0 or ptype != '') and paccum <= 0.1:  # Only display Precip: percentage if paccum <= 0.1
-            s += 'Precip: ' + '%.0f' % pop + '%\n'
+        # If precipitationProbality is greater than 0% but no accumulation show rain or snow with probability percentage.
+        # If no precip type or no precip forcated, show Precip: 0%
+
+        if pop >= 0.0 and raccum == 0.00 and saccum == 0.00:
+            if ptype == 1:
+                s += Config.LRain + '%.0f' % pop + '%\n'
+            else: 
+                if ptype == 2:
+                    s += Config.LSnow + '%.0f' % pop + '%\n'
+            s += 'No Precipitation' + '\n'
+
+        
+        # Logic to show rain or snow probability, followed by projected accumulations on forecast line 2
+        # Temperature in imperial or metric runs on line 3
+
 
         if Config.metric:
             if ptype == 2:
-                if paccum > 0.1:
-                    s += Config.LSnow + '%.1f' % inches2mm(paccum) + 'mm/hr\n'
+                if saccum >= 0.01:
+                    s += Config.LSnow + '%.0f' % pop + '% ' + '| Total: ' + '%.2f' % inches2mm(saccum) + ' mm\n'
             else:
-                if paccum > 0.1:
-                    s += Config.LRain + '%.1f' % inches2mm(paccum) + 'mm/hr\n'
+                if raccum >= 0.01:
+                    s += Config.LRain + '%.0f' % pop + '% ' + '| Total: ' + '%.2f' % inches2mm(raccum) + ' mm\n'
             s += 'Temp: ' + '%.0f' % tempf2tempc(f['values']['temperature']) + u'°C'
         else:
             if ptype == 2:
-                if paccum > 0.1:
-                    s += Config.LSnow + '%.1f' % paccum + 'in/hr\n'
+                if saccum >= 0.01:
+                    s += Config.LSnow + '%.0f' % pop + '% ' + '| Total: ' + '%.2f' % saccum + ' in\n'
             else:
-                if paccum > 0.1:
-                    s += Config.LRain + '%.1f' % paccum + 'in/hr\n'
+                if raccum >= 0.01:
+                    s += Config.LRain + '%.0f' % pop + '% ' + '| Total: ' + '%.2f' % raccum + ' in\n'
             s += 'Temp: ' + '%.0f' % (f['values']['temperature']) + u'°F'
 
         wx.setStyleSheet('#wx { font-size: ' + str(int(17 * xscale * Config.fontmult)) + 'px; }')
@@ -1080,8 +1092,9 @@ def wxfinished_tm_daily():
                                               .astimezone(tzlocal.get_localzone())))
             s = ''
             pop = float(f['values']['precipitationProbability'])
-            ptype = ''
-            paccum = float(f['values']['precipitationIntensity'])
+            ptype = float(f['values']['precipitationType'])
+            saccum = float(f['values']['snowAccumulationAvg'])
+            raccum = float(f['values']['rainAccumulationAvg'])
             wc = tm_code_icons[f['values']['weatherCode']]
 
             if '4000' in wc:
@@ -1117,24 +1130,36 @@ def wxfinished_tm_daily():
             if '8000' in wc:
                 ptype = 'rain'
 
-            if (pop >= 0.0 or ptype != '') and paccum <= 0.1:  # Only display Precip: percentage if paccum <= 0.1
-                s += 'Precip: ' + '%.0f' % pop + '%\n'
+            # If precipitationProbality is greater than 0% but no accumulation show rain or snow with probability percentage.
+            # If no precip type or no precip forcated, show Precip: 0% 
+
+            if pop >= 0.0 and raccum == 0.00 and saccum == 0.00:
+                if ptype == 1:
+                    s += Config.LRain + '%.0f' % pop + '%\n'
+                elif ptype == 2:
+                    s += Config.LSnow + '%.0f' % pop + '%\n'
+                else:
+                    s += 'No Precipitation' + '\n'
+
+            # Logic to show rain or snow probability, followed by projected accumulations on forecast line 2
+            # Temperature in imperial or metric runs on line 3
+
 
             if Config.metric:
                 if ptype == 2:
-                    if paccum > 0.1:
-                        s += Config.LSnow + '%.1f' % inches2mm(paccum) + 'mm/hr\n'
+                    if saccum >= 0.01:
+                        s += Config.LSnow + '%.0f' % pop + '% ' + '| Total: ' + '%.2f' % inches2mm(saccum) + ' mm\n'
                 else:
-                    if paccum > 0.1:
-                        s += Config.LRain + '%.1f' % inches2mm(paccum) + 'mm/hr\n'
+                    if raccum >= 0.01:
+                        s += Config.LRain + '%.0f' % pop + '% ' + '| Total: ' + '%.2f' % inches2mm(raccum) + ' mm\n'
                 s += 'Temp: ' + '%.0f' % tempf2tempc(f['values']['temperature']) + u'°C'
             else:
                 if ptype == 2:
-                    if paccum > 0.1:
-                        s += Config.LSnow + '%.1f' % paccum + 'in/hr\n'
+                    if saccum >= 0.01:
+                        s += Config.LSnow + '%.0f' % pop + '% ' + '| Total: ' + '%.2f' % saccum + ' in\n'
                 else:
-                    if paccum > 0.1:
-                        s += Config.LRain + '%.1f' % paccum + 'in/hr\n'
+                    if raccum >= 0.01:
+                        s += Config.LRain + '%.0f' % pop + '% ' + '| Total: ' + '%.2f' % raccum + ' in\n'
                 s += 'Temp: ' + '%.0f' % (f['values']['temperature']) + u'°F'
 
             wx.setStyleSheet('#wx { font-size: ' + str(int(17 * xscale * Config.fontmult)) + 'px; }')
@@ -1457,7 +1482,8 @@ def getwx_tm():
     wxurl2 += '&location=' + str(Config.location.lat) + ',' + str(Config.location.lng)
     wxurl2 += '&units=imperial'
     wxurl2 += '&fields=temperature,precipitationIntensity,precipitationType,'
-    wxurl2 += 'precipitationProbability,weatherCode'
+    wxurl2 += 'precipitationProbability,weatherCode,'
+    wxurl2 += 'snowAccumulationAvg,rainAccumulationAvg'
     print('INFO: getting Tomorrow.io hourly forecast: ' + wxurl2)
     r2 = QUrl(wxurl2)
     r2 = QNetworkRequest(r2)
@@ -1469,7 +1495,8 @@ def getwx_tm():
     wxurl3 += '&location=' + str(Config.location.lat) + ',' + str(Config.location.lng)
     wxurl3 += '&units=imperial'
     wxurl3 += '&fields=temperature,precipitationIntensity,precipitationType,'
-    wxurl3 += 'precipitationProbability,weatherCode,temperatureMax,temperatureMin'
+    wxurl3 += 'precipitationProbability,weatherCode,temperatureMax,temperatureMin,'
+    wxurl3 += 'snowAccumulationAvg,rainAccumulationAvg'
     print('INFO: getting Tomorrow.io daily forecast: ' + wxurl3)
     r3 = QUrl(wxurl3)
     r3 = QNetworkRequest(r3)
@@ -2611,7 +2638,7 @@ shadow.setOffset(2, 2)                  # Offset for the shadow (x, y)
 temper2.setGraphicsEffect(shadow)
 
 
-ypos += 58
+ypos += 61
 feelslike = QtWidgets.QLabel(foreGround)
 feelslike.setObjectName('feelslike')
 feelslike.setStyleSheet('#feelslike { background-color: transparent; color: ' +
