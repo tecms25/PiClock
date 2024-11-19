@@ -1014,21 +1014,23 @@ def wxfinished_tm_hourly():
         saccum = float(f['values']['snowAccumulationAvg'])
         raccum = float(f['values']['rainAccumulationAvg'])
 
+        if Config.metric:
+            s += 'Temp: ' + '%.0f' % tempf2tempc(f['values']['temperature']) + u'°C'
+        else:
+            s += 'Temp: ' + '%.0f' % (f['values']['temperature']) + u'°F'
+
         # If precipitationProbality is greater than 0% but no accumulation show rain or snow with probability percentage.
         # If no precip type or no precip forcated, show Precip: 0%
 
         if pop >= 0.0 and raccum == 0.00 and saccum == 0.00:
             if ptype == 1:
                 s += Config.LRain + '%.0f' % pop + '%\n'
-            else: 
-                if ptype == 2:
-                    s += Config.LSnow + '%.0f' % pop + '%\n'
-            s += 'No Precipitation' + '\n'
-
-        
-        # Logic to show rain or snow probability, followed by projected accumulations on forecast line 2
-        # Temperature in imperial or metric runs on line 3
-
+            elif ptype == 2:
+                s += Config.LSnow + '%.0f' % pop + '%\n'
+            else:
+                s += 'No Precipitation' + '\n'
+            
+        # Logic to show rain or snow probability, followed by projected accumulations in forecast
 
         if Config.metric:
             if ptype == 2:
@@ -1037,7 +1039,6 @@ def wxfinished_tm_hourly():
             else:
                 if raccum >= 0.01:
                     s += Config.LRain + '%.0f' % pop + '% ' + '| Total: ' + '%.2f' % inches2mm(raccum) + ' mm\n'
-            s += 'Temp: ' + '%.0f' % tempf2tempc(f['values']['temperature']) + u'°C'
         else:
             if ptype == 2:
                 if saccum >= 0.01:
@@ -1045,7 +1046,6 @@ def wxfinished_tm_hourly():
             else:
                 if raccum >= 0.01:
                     s += Config.LRain + '%.0f' % pop + '% ' + '| Total: ' + '%.2f' % raccum + ' in\n'
-            s += 'Temp: ' + '%.0f' % (f['values']['temperature']) + u'°F'
 
         wx.setStyleSheet('#wx { font-size: ' + str(int(17 * xscale * Config.fontmult)) + 'px; }')
         wx.setText(tm_code_map[f['values']['weatherCode']] + '\n' + s)
@@ -1130,6 +1130,11 @@ def wxfinished_tm_daily():
             if '8000' in wc:
                 ptype = 'rain'
 
+            if Config.metric:
+                s += 'Temp: ' + '%.0f' % tempf2tempc(f['values']['temperature']) + u'°C'
+            else:
+                s += 'Temp: ' + '%.0f' % (f['values']['temperature']) + u'°F'
+
             # If precipitationProbality is greater than 0% but no accumulation show rain or snow with probability percentage.
             # If no precip type or no precip forcated, show Precip: 0% 
 
@@ -1141,8 +1146,7 @@ def wxfinished_tm_daily():
                 else:
                     s += 'No Precipitation' + '\n'
 
-            # Logic to show rain or snow probability, followed by projected accumulations on forecast line 2
-            # Temperature in imperial or metric runs on line 3
+            # Logic to show rain or snow probability, followed by projected accumulations in forecast
 
 
             if Config.metric:
