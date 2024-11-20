@@ -1020,16 +1020,16 @@ def wxfinished_tm_hourly():
             s += 'Temp: ' + '%.0f' % (f['values']['temperature']) + u'°F\n'
 
         # If precipitationProbality is greater than 0% but no accumulation show rain or snow with probability percentage.
-        # If no precip type or no precip forcated, show Precip: 0%
+        # If no precip type or no precip forcated, show No Precipitation
 
-        if pop >= 0.0 and raccum == 0.00 and saccum == 0.00:
-            if ptype == 1:
+        if pop >= 1 and ptype > 0:
+            if ptype == 1 and raccum == 0.00:
                 s += Config.LRain + '%.0f' % pop + '%'
-            elif ptype == 2:
-                s += Config.LSnow + '%.0f' % pop + '%'
-            else:
+            elif ptype == 2 and saccum == 0.00:
+                s += Config.LSnow + '%.0f' % pop + '%'                
+        if pop == 0:
                 s += 'No Precipitation'
-            
+
         # Logic to show rain or snow probability, followed by projected accumulations in forecast
 
         if Config.metric:
@@ -1152,12 +1152,12 @@ def wxfinished_tm_daily():
             # If precipitationProbality is greater than 0% but no accumulation show rain or snow with probability percentage.
             # If no precip type or no precip forcated, show No Precipitation
 
-            if pop >= 0.0 and raccum == 0.00 and saccum == 0.00:
-                if ptype == 1:
+            if pop >= 1 and ptype > 0:
+                if ptype == 1 and raccum == 0.00:
                     s += Config.LRain + '%.0f' % pop + '%'
-                elif ptype == 2:
+                elif ptype == 2 and saccum == 0.00:
                     s += Config.LSnow + '%.0f' % pop + '%'
-                else:
+            if pop == 0:
                     s += 'No Precipitation'
 
             # Logic to show rain or snow probability, followed by projected accumulations in forecast
