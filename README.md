@@ -11,8 +11,8 @@ has been mediocore at best. All code will be directed for use with Tomorrow.io. 
 I've found their forecasting to be better. Additional sources will be added if deemed accurate enough.
 
 ## Original PiClock (https://github.com/n0bel/PiClock)
-## Thanks to N0BEL for the original codebase. I've been running a PiClock in one fashion or another for almost a decade.
-## Additional thanks to SerBrynden for the Python3 and PyQt5 updates. This repository is originally forked from his PiClock fork.
+Thanks to N0BEL for the original codebase. I've been running a PiClock in one fashion or another for almost a decade.
+Additional thanks to SerBrynden for the Python3 and PyQt5 updates. This repository is originally forked from his PiClock fork.
 A Fancy Clock built around a monitor and a Raspberry Pi
 
 ![PiClock Picture](Pictures/20150307_222711.jpg)
