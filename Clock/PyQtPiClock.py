@@ -1023,10 +1023,10 @@ def wxfinished_tm_hourly():
         # If no precip type or no precip forcated, show No Precipitation
 
         if pop >= 1 and ptype > 0:
-            if ptype == 1 and raccum == 0.00:
-                s += Config.LRain + '%.0f' % pop + '%'
-            elif ptype == 2 and saccum == 0.00:
-                s += Config.LSnow + '%.0f' % pop + '%'
+            if ptype == 1 and raccum == 0.00 and saccum == 0.00:
+                s += Config.LRain + '%.0f' % pop + '% | > 0.00 in'
+            elif ptype == 2 and saccum == 0.00 and raccum == 0.00:
+                s += Config.LSnow + '%.0f' % pop + '% | > 0.00 in'
         if pop >=1 and ptype == 0:
             s += 'No Precipitation'                
         if pop == 0:
@@ -1155,10 +1155,10 @@ def wxfinished_tm_daily():
             # If no precip type or no precip forcated, show No Precipitation
 
             if pop >= 1 and ptype > 0:
-                if ptype == 1 and raccum == 0.00:
-                    s += Config.LRain + '%.0f' % pop + '%'
-                elif ptype == 2 and saccum == 0.00:
-                    s += Config.LSnow + '%.0f' % pop + '%'
+                if ptype == 1 and raccum == 0.00 and saccum == 0.00:
+                    s += Config.LRain + '%.0f' % pop + '% | > 0.00 in'
+                elif ptype == 2 and saccum == 0.00 and raccum == 0.00:
+                    s += Config.LSnow + '%.0f' % pop + '% | > 0.00 in'
             if pop >=1 and ptype == 0:
                 s += 'No Precipitation'
             if pop == 0:
