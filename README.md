@@ -1,16 +1,18 @@
-# PiClock
-## PiClock Mods
-Fork of PiClock that uses custom dark maps from MapBox, for better contrast 
+# PiClock Updates and Improvements
+
+Fork of PiClock that uses custom maps from MapBox, for better contrast 
 between the weather radar and the maps, with an additional map overlay so that 
 rain/snow clouds do not obscure map information, such as labels, borders, and roads.
-Several other UX updates have been added, along with the ability to specify remote images for a slideshow
+Also added is text shadows/borders for easier visibility. THe original version can be hard to read with certain backgrounds.
+Several other UX and language updates have been added, along with the ability to specify remote images for a slideshow.
 
-The radar windows consist of three layers:
- - Bottom layer is a plain MapBox dark map with no labels, borders, or roads.
- - Middle layer is the weather radar imagery.
- - Top layer is a transparent MapBox map with only labels, borders, and roads.
+This PiClock fork is removing use of OpenWeatherMaps. Current PiClock support doesn't use v3 and my experience with OWM
+has been mediocore at best. All code will be directed for use with Tomorrow.io. Although they support less free API calls,
+I've found their forecasting to be better. Additional sources will be added if deemed accurate enough.
 
-## Original PiClock
+## Original PiClock (https://github.com/n0bel/PiClock)
+## Thanks to N0BEL for the original codebase. I've been running a PiClock in one fashion or another for almost a decade.
+## Additional thanks to SerBrynden for the Python3 and PyQt5 updates. This repository is originally forked from his PiClock fork.
 A Fancy Clock built around a monitor and a Raspberry Pi
 
 ![PiClock Picture](Pictures/20150307_222711.jpg)
