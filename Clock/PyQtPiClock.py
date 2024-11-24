@@ -1015,54 +1015,57 @@ def wxfinished_tm_hourly():
         raccum = float(f['values']['rainAccumulationAvg'])
 
         if Config.metric:
-            s += 'Temp: ' + '%.0f' % tempf2tempc(f['values']['temperature']) + u'°C\n'
+            s += '%.0f' % tempf2tempc(f['values']['temperature']) + u'°C '
         else:
-            s += 'Temp: ' + '%.0f' % (f['values']['temperature']) + u'°F\n'
+            s += '%.0f' % (f['values']['temperature']) + u'°F '
 
         # If precipitationProbality is greater than 0% but no accumulation show rain or snow with probability percentage.
         # If no precip type or no precip forcated, show No Precipitation
 
         if pop >= 1 and ptype > 0:
             if ptype == 1 and raccum == 0.00 and saccum == 0.00:
-                s += Config.LRain + '%.0f' % pop + '% | > 0.00 in'
+                s += Config.LRain + '%.0f' % pop + '%'
             elif ptype == 2 and saccum == 0.00 and raccum == 0.00:
-                s += Config.LSnow + '%.0f' % pop + '% | > 0.00 in'
-        if pop >=1 and ptype == 0:
-            s += 'No Precipitation'                
-        if pop == 0:
-            s += 'No Precipitation'
+                s += Config.LSnow + '%.0f' % pop + '%'
+#        if pop >=1 and ptype == 0:
+#            s += 'No Precipitation'                
+#        if pop == 0:
+#            s += 'No Precipitation'
 
         # Logic to show rain or snow probability, followed by projected accumulations in forecast
 
         if Config.metric:
             if ptype == 2:
-                if saccum >= 0.01:
-                    s += Config.LSnow + '%.0f' % pop + '% ' + '| ' + '%.2f' % inches2mm(saccum) + ' mm'
+                if saccum >= 0.10:
+                    s += Config.LSnow + '%.0f' % pop + '% ' + '\n' + 'Accumulation: ' + '%.2f' % inches2mm(saccum) + ' mm'
                 else:
-                    if raccum >= 0.01:
-                        s += Config.LRain + '%.0f' % pop + '% ' + '| ' + '%.2f' % inches2mm(raccum) + ' mm'
+                    if raccum >= 0.10:
+                        s += Config.LRain + '%.0f' % pop + '% ' + '\n' + 'Accumulation: ' + '%.2f' % inches2mm(raccum) + ' mm'
             else:
-                if raccum >= 0.01:
-                    s += Config.LRain + '%.0f' % pop + '% ' + '| ' + '%.2f' % inches2mm(raccum) + ' mm'
+                if raccum >= 0.10:
+                    s += Config.LRain + '%.0f' % pop + '% ' + '\n' + 'Accumulation: ' + '%.2f' % inches2mm(raccum) + ' mm'
                 else:
-                    if saccum >= 0.01:
-                        s += Config.LSnow + '%.0f' % pop + '% ' + '| ' + '%.2f' % inches2mm(saccum) + ' mm'
+                    if saccum >= 0.10:
+                        s += Config.LSnow + '%.0f' % pop + '% ' + '\n' + 'Accumulation: ' + '%.2f' % inches2mm(saccum) + ' mm'
         else:
             if ptype == 2:
-                if saccum >= 0.01:
-                    s += Config.LSnow + '%.0f' % pop + '% ' + '| ' + '%.2f' % saccum + ' in'
+                if saccum >= 0.10:
+                    s += Config.LSnow + '%.0f' % pop + '% ' + '\n' + 'Accumulation: ' + '%.2f' % saccum + ' in'
                 else:
-                    if raccum >= 0.01:
-                        s += Config.LRain + '%.0f' % pop + '% ' + '| ' + '%.2f' % raccum + ' in'
+                    if raccum >= 0.10:
+                        s += Config.LRain + '%.0f' % pop + '% ' + '\n' + 'Accumulation: ' + '%.2f' % raccum + ' in'
             else:
-                if raccum >= 0.01:
-                    s += Config.LRain + '%.0f' % pop + '% ' + '| ' + '%.2f' % raccum + ' in'
+                if raccum >= 0.10:
+                    s += Config.LRain + '%.0f' % pop + '% ' + '\n' + 'Accumulation: ' + '%.2f' % raccum + ' in'
                 else:
-                    if saccum >= 0.01:
-                        s += Config.LSnow + '%.0f' % pop + '% ' + '| ' + '%.2f' % saccum + ' in'
+                    if saccum >= 0.10:
+                        s += Config.LSnow + '%.0f' % pop + '% ' + '\n' + 'Accumulation: ' + '%.2f' % saccum + ' in'
 
         wx.setStyleSheet('#wx { font-size: ' + str(int(17 * xscale * Config.fontmult)) + 'px; }')
-        wx.setText(tm_code_map[f['values']['weatherCode']] + '\n' + s)
+        if pop >=1 and saccum >= 0.01 or raccum >= 0.01:
+            wx.setText(tm_code_map[f['values']['weatherCode']] + '\n' + s)
+        else:
+            wx.setText('\n' + tm_code_map[f['values']['weatherCode']] + '\n' + s)
 
 
 def wxfinished_tm_daily():
@@ -1145,58 +1148,63 @@ def wxfinished_tm_daily():
                 ptype = 'rain'
 
             if Config.metric:
-                s += 'Temp: ' + '%.0f' % tempf2tempc(f['values']['temperatureMax']) + '/' + \
-                     '%.0f' % tempf2tempc(f['values']['temperatureMin']) + u'°C\n'
+                s += '%.0f' % tempf2tempc(f['values']['temperatureMax']) + '/' + \
+                     '%.0f' % tempf2tempc(f['values']['temperatureMin']) + u'°C '
             else:
-                s += 'Temp: ' + '%.0f' % f['values']['temperatureMax'] + '/' + \
-                     '%.0f' % f['values']['temperatureMin'] + u'°F\n'
+                s += '%.0f' % f['values']['temperatureMax'] + '/' + \
+                     '%.0f' % f['values']['temperatureMin'] + u'°F '
 
             # If precipitationProbality is greater than 0% but no accumulation show rain or snow with probability percentage.
             # If no precip type or no precip forcated, show No Precipitation
 
             if pop >= 1 and ptype > 0:
                 if ptype == 1 and raccum == 0.00 and saccum == 0.00:
-                    s += Config.LRain + '%.0f' % pop + '% | > 0.00 in'
+                    s += Config.LRain + '%.0f' % pop + '%'
                 elif ptype == 2 and saccum == 0.00 and raccum == 0.00:
-                    s += Config.LSnow + '%.0f' % pop + '% | > 0.00 in'
-            if pop >=1 and ptype == 0:
-                s += 'No Precipitation'
-            if pop == 0:
-                s += 'No Precipitation'
+                    s += Config.LSnow + '%.0f' % pop + '%'
+#            if pop >=1 and ptype == 0:
+#                s += 'No Precipitation'
+#            if pop == 0:
+#                s += 'No Precipitation'
             
 
             # Logic to show rain or snow probability, followed by projected accumulations in forecast
 
             if Config.metric:
                 if ptype == 2:
-                    if saccum >= 0.01:
-                        s += Config.LSnow + '%.0f' % pop + '% ' + '| ' + '%.2f' % inches2mm(saccum) + ' mm'
+                    if saccum >= 0.10:
+                        s += Config.LSnow + '%.0f' % pop + '% ' + '\n' + 'Accumulation: ' + '%.2f' % inches2mm(saccum) + ' mm'
                     else:
-                        if raccum >= 0.01:
-                            s += Config.LRain + '%.0f' % pop + '% ' + '| ' + '%.2f' % inches2mm(raccum) + ' mm'
+                        if raccum >= 0.10:
+                            s += Config.LRain + '%.0f' % pop + '% ' + '\n' + 'Accumulation: ' + '%.2f' % inches2mm(raccum) + ' mm'
                 else:
-                    if raccum >= 0.01:
-                        s += Config.LRain + '%.0f' % pop + '% ' + '| ' + '%.2f' % inches2mm(raccum) + ' mm'
+                    if raccum >= 0.10:
+                        s += Config.LRain + '%.0f' % pop + '% ' + '\n' + 'Accumulation: ' + '%.2f' % inches2mm(raccum) + ' mm'
                     else:
-                        if saccum >= 0.01:
-                            s += Config.LSnow + '%.0f' % pop + '% ' + '| ' + '%.2f' % inches2mm(saccum) + ' mm'
+                        if saccum >= 0.10:
+                            s += Config.LSnow + '%.0f' % pop + '% ' + '\n' + 'Accumulation: ' + '%.2f' % inches2mm(saccum) + ' mm'
             else:
                 if ptype == 2:
-                    if saccum >= 0.01:
-                        s += Config.LSnow + '%.0f' % pop + '% ' + '| ' + '%.2f' % saccum + ' in'
+                    if saccum >= 0.10:
+                        s += Config.LSnow + '%.0f' % pop + '% ' + '\n' + 'Accumulation: ' + '%.2f' % saccum + ' in'
                     else:
-                        if raccum >= 0.01:
-                            s += Config.LRain + '%.0f' % pop + '% ' + '| ' + '%.2f' % raccum + ' in'
+                        if raccum >= 0.10:
+                            s += Config.LRain + '%.0f' % pop + '% ' + '\n' + 'Accumulation: ' + '%.2f' % raccum + ' in'
                 else:
-                    if raccum >= 0.01:
-                        s += Config.LRain + '%.0f' % pop + '% ' + '| ' + '%.2f' % raccum + ' in'
+                    if raccum >= 0.10:
+                        s += Config.LRain + '%.0f' % pop + '% ' + '\n' + 'Accumulation: ' + '%.2f' % raccum + ' in'
                     else:
-                        if saccum >= 0.01:
-                            s += Config.LSnow + '%.0f' % pop + '% ' + '| ' + '%.2f' % saccum + ' in'
+                        if saccum >= 0.10:
+                            s += Config.LSnow + '%.0f' % pop + '% ' + '\n' + 'Accumulation: ' + '%.2f' % saccum + ' in'
 
 
             wx.setStyleSheet('#wx { font-size: ' + str(int(17 * xscale * Config.fontmult)) + 'px; }')
-            wx.setText(tm_code_map[f['values']['weatherCode']] + '\n' + s)
+            if pop >=1 and saccum >= 0.01 or raccum >= 0.01:
+                wx.setText(tm_code_map[f['values']['weatherCode']] + '\n' + s)
+            else:
+                wx.setText('\n' + tm_code_map[f['values']['weatherCode']] + '\n' + s)
+            
+            
 
         except IndexError:
             print('WARNING:', traceback.format_exc())
