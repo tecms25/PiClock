@@ -13,6 +13,7 @@ Clock/*.log*
 # Distribution / packaging
 .Python
 env/
+venv/
 build/
 develop-eggs/
 dist/
@@ -79,3 +80,4 @@ venv/bin/timezonefinder
 venv/pyvenv.cfg
 Clock/slideshow.py
 .DS_Store
+Clock/qt5to6.py
