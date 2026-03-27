@@ -1718,7 +1718,7 @@ def qtstart():
             f"falling back to tzlocal.get_localzone() -> {tzlatlng}"
         )
 
-
+    sun = SunTimes(Config.location.lat, Config.location.lng, tzlatlng)
     sunrise = sun.sunrise(dt)
     sunset = sun.sunset(dt)
     if sunrise <= dt <= sunset:
