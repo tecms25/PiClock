@@ -25,6 +25,7 @@ from PyQt5.QtGui import QPixmap, QBrush, QColor
 from PyQt5.QtNetwork import QNetworkReply
 from PyQt5.QtNetwork import QNetworkRequest
 from timezonefinder import TimezoneFinder
+from tzfpy import get_tz
 
 sys.dont_write_bytecode = True
 from GoogleMercatorProjection import get_corners, get_point, get_tile_xy, LatLng  # NOQA
@@ -1015,54 +1016,57 @@ def wxfinished_tm_hourly():
         raccum = float(f['values']['rainAccumulationAvg'])
 
         if Config.metric:
-            s += 'Temp: ' + '%.0f' % tempf2tempc(f['values']['temperature']) + u'°C\n'
+            s += '%.0f' % tempf2tempc(f['values']['temperature']) + u'°C '
         else:
-            s += 'Temp: ' + '%.0f' % (f['values']['temperature']) + u'°F\n'
+            s += '%.0f' % (f['values']['temperature']) + u'°F '
 
         # If precipitationProbality is greater than 0% but no accumulation show rain or snow with probability percentage.
         # If no precip type or no precip forcated, show No Precipitation
 
         if pop >= 1 and ptype > 0:
-            if ptype == 1 and raccum == 0.00:
+            if ptype == 1 and raccum == 0.00 and saccum == 0.00:
                 s += Config.LRain + '%.0f' % pop + '%'
-            elif ptype == 2 and saccum == 0.00:
+            elif ptype == 2 and saccum == 0.00 and raccum == 0.00:
                 s += Config.LSnow + '%.0f' % pop + '%'
-        if pop >=1 and ptype == 0:
-            s += 'No Precipitation'                
-        if pop == 0:
-            s += 'No Precipitation'
+#        if pop >=1 and ptype == 0:
+#            s += 'No Precipitation'                
+#        if pop == 0:
+#            s += 'No Precipitation'
 
         # Logic to show rain or snow probability, followed by projected accumulations in forecast
 
         if Config.metric:
             if ptype == 2:
-                if saccum >= 0.01:
-                    s += Config.LSnow + '%.0f' % pop + '% ' + '| ' + '%.2f' % inches2mm(saccum) + ' mm'
+                if saccum >= 0.10:
+                    s += Config.LSnow + '%.0f' % pop + '% ' + '\n' + 'Accumulation: ' + '%.2f' % inches2mm(saccum) + ' mm'
                 else:
-                    if raccum >= 0.01:
-                        s += Config.LRain + '%.0f' % pop + '% ' + '| ' + '%.2f' % inches2mm(raccum) + ' mm'
+                    if raccum >= 0.10:
+                        s += Config.LRain + '%.0f' % pop + '% ' + '\n' + 'Accumulation: ' + '%.2f' % inches2mm(raccum) + ' mm'
             else:
-                if raccum >= 0.01:
-                    s += Config.LRain + '%.0f' % pop + '% ' + '| ' + '%.2f' % inches2mm(raccum) + ' mm'
+                if raccum >= 0.10:
+                    s += Config.LRain + '%.0f' % pop + '% ' + '\n' + 'Accumulation: ' + '%.2f' % inches2mm(raccum) + ' mm'
                 else:
-                    if saccum >= 0.01:
-                        s += Config.LSnow + '%.0f' % pop + '% ' + '| ' + '%.2f' % inches2mm(saccum) + ' mm'
+                    if saccum >= 0.10:
+                        s += Config.LSnow + '%.0f' % pop + '% ' + '\n' + 'Accumulation: ' + '%.2f' % inches2mm(saccum) + ' mm'
         else:
             if ptype == 2:
-                if saccum >= 0.01:
-                    s += Config.LSnow + '%.0f' % pop + '% ' + '| ' + '%.2f' % saccum + ' in'
+                if saccum >= 0.10:
+                    s += Config.LSnow + '%.0f' % pop + '% ' + '\n' + 'Accumulation: ' + '%.2f' % saccum + ' in'
                 else:
-                    if raccum >= 0.01:
-                        s += Config.LRain + '%.0f' % pop + '% ' + '| ' + '%.2f' % raccum + ' in'
+                    if raccum >= 0.10:
+                        s += Config.LRain + '%.0f' % pop + '% ' + '\n' + 'Accumulation: ' + '%.2f' % raccum + ' in'
             else:
-                if raccum >= 0.01:
-                    s += Config.LRain + '%.0f' % pop + '% ' + '| ' + '%.2f' % raccum + ' in'
+                if raccum >= 0.10:
+                    s += Config.LRain + '%.0f' % pop + '% ' + '\n' + 'Accumulation: ' + '%.2f' % raccum + ' in'
                 else:
-                    if saccum >= 0.01:
-                        s += Config.LSnow + '%.0f' % pop + '% ' + '| ' + '%.2f' % saccum + ' in'
+                    if saccum >= 0.10:
+                        s += Config.LSnow + '%.0f' % pop + '% ' + '\n' + 'Accumulation: ' + '%.2f' % saccum + ' in'
 
         wx.setStyleSheet('#wx { font-size: ' + str(int(17 * xscale * Config.fontmult)) + 'px; }')
-        wx.setText(tm_code_map[f['values']['weatherCode']] + '\n' + s)
+        if pop >=1 and saccum >= 0.10 or raccum >= 0.10:
+            wx.setText(tm_code_map[f['values']['weatherCode']] + '\n' + s)
+        else:
+            wx.setText('\n' + tm_code_map[f['values']['weatherCode']] + '\n' + s)
 
 
 def wxfinished_tm_daily():
@@ -1145,58 +1149,63 @@ def wxfinished_tm_daily():
                 ptype = 'rain'
 
             if Config.metric:
-                s += 'Temp: ' + '%.0f' % tempf2tempc(f['values']['temperatureMax']) + '/' + \
-                     '%.0f' % tempf2tempc(f['values']['temperatureMin']) + u'°C\n'
+                s += '%.0f' % tempf2tempc(f['values']['temperatureMax']) + '/' + \
+                     '%.0f' % tempf2tempc(f['values']['temperatureMin']) + u'°C '
             else:
-                s += 'Temp: ' + '%.0f' % f['values']['temperatureMax'] + '/' + \
-                     '%.0f' % f['values']['temperatureMin'] + u'°F\n'
+                s += '%.0f' % f['values']['temperatureMax'] + '/' + \
+                     '%.0f' % f['values']['temperatureMin'] + u'°F '
 
             # If precipitationProbality is greater than 0% but no accumulation show rain or snow with probability percentage.
             # If no precip type or no precip forcated, show No Precipitation
 
             if pop >= 1 and ptype > 0:
-                if ptype == 1 and raccum == 0.00:
+                if ptype == 1 and raccum == 0.00 and saccum == 0.00:
                     s += Config.LRain + '%.0f' % pop + '%'
-                elif ptype == 2 and saccum == 0.00:
+                elif ptype == 2 and saccum == 0.00 and raccum == 0.00:
                     s += Config.LSnow + '%.0f' % pop + '%'
-            if pop >=1 and ptype == 0:
-                s += 'No Precipitation'
-            if pop == 0:
-                s += 'No Precipitation'
+#            if pop >=1 and ptype == 0:
+#                s += 'No Precipitation'
+#            if pop == 0:
+#                s += 'No Precipitation'
             
 
             # Logic to show rain or snow probability, followed by projected accumulations in forecast
 
             if Config.metric:
                 if ptype == 2:
-                    if saccum >= 0.01:
-                        s += Config.LSnow + '%.0f' % pop + '% ' + '| ' + '%.2f' % inches2mm(saccum) + ' mm'
+                    if saccum >= 0.10:
+                        s += Config.LSnow + '%.0f' % pop + '% ' + '\n' + 'Accumulation: ' + '%.2f' % inches2mm(saccum) + ' mm'
                     else:
-                        if raccum >= 0.01:
-                            s += Config.LRain + '%.0f' % pop + '% ' + '| ' + '%.2f' % inches2mm(raccum) + ' mm'
+                        if raccum >= 0.10:
+                            s += Config.LRain + '%.0f' % pop + '% ' + '\n' + 'Accumulation: ' + '%.2f' % inches2mm(raccum) + ' mm'
                 else:
-                    if raccum >= 0.01:
-                        s += Config.LRain + '%.0f' % pop + '% ' + '| ' + '%.2f' % inches2mm(raccum) + ' mm'
+                    if raccum >= 0.10:
+                        s += Config.LRain + '%.0f' % pop + '% ' + '\n' + 'Accumulation: ' + '%.2f' % inches2mm(raccum) + ' mm'
                     else:
-                        if saccum >= 0.01:
-                            s += Config.LSnow + '%.0f' % pop + '% ' + '| ' + '%.2f' % inches2mm(saccum) + ' mm'
+                        if saccum >= 0.10:
+                            s += Config.LSnow + '%.0f' % pop + '% ' + '\n' + 'Accumulation: ' + '%.2f' % inches2mm(saccum) + ' mm'
             else:
                 if ptype == 2:
-                    if saccum >= 0.01:
-                        s += Config.LSnow + '%.0f' % pop + '% ' + '| ' + '%.2f' % saccum + ' in'
+                    if saccum >= 0.10:
+                        s += Config.LSnow + '%.0f' % pop + '% ' + '\n' + 'Accumulation: ' + '%.2f' % saccum + ' in'
                     else:
-                        if raccum >= 0.01:
-                            s += Config.LRain + '%.0f' % pop + '% ' + '| ' + '%.2f' % raccum + ' in'
+                        if raccum >= 0.10:
+                            s += Config.LRain + '%.0f' % pop + '% ' + '\n' + 'Accumulation: ' + '%.2f' % raccum + ' in'
                 else:
-                    if raccum >= 0.01:
-                        s += Config.LRain + '%.0f' % pop + '% ' + '| ' + '%.2f' % raccum + ' in'
+                    if raccum >= 0.10:
+                        s += Config.LRain + '%.0f' % pop + '% ' + '\n' + 'Accumulation: ' + '%.2f' % raccum + ' in'
                     else:
-                        if saccum >= 0.01:
-                            s += Config.LSnow + '%.0f' % pop + '% ' + '| ' + '%.2f' % saccum + ' in'
+                        if saccum >= 0.10:
+                            s += Config.LSnow + '%.0f' % pop + '% ' + '\n' + 'Accumulation: ' + '%.2f' % saccum + ' in'
 
 
             wx.setStyleSheet('#wx { font-size: ' + str(int(17 * xscale * Config.fontmult)) + 'px; }')
-            wx.setText(tm_code_map[f['values']['weatherCode']] + '\n' + s)
+            if pop >=1 and saccum >= 0.10 or raccum >= 0.10:
+                wx.setText(tm_code_map[f['values']['weatherCode']] + '\n' + s)
+            else:
+                wx.setText('\n' + tm_code_map[f['values']['weatherCode']] + '\n' + s)
+            
+            
 
         except IndexError:
             print('WARNING:', traceback.format_exc())
@@ -1548,7 +1557,7 @@ def getwx_metar():
 
 
 def qtstart():
-    global ctimer, wxtimer, temptimer
+    global ctimer, wxtimer, temptimer, metadatatimer
     global objradar1
     global objradar2
     global objradar3
@@ -1600,6 +1609,16 @@ def qtstart():
     temptimer = QtCore.QTimer()
     temptimer.timeout.connect(gettemp)
     temptimer.start(int(1000 * 10 * 60 + random.uniform(1000, 10000)))
+
+
+    # Fetch RainViewer metadata once at regular intervals (every 10 minutes)
+    metadatatimer = QtCore.QTimer()
+    metadatatimer.timeout.connect(get_rainviewer_metadata)
+    metadatatimer.start(int(1000 * 600 + random.uniform(1000, 5000)))  # 10 minutes
+
+    # Fetch metadata immediately on startup
+    get_rainviewer_metadata()
+
 
     if Config.useslideshow:
         objimage1.start(Config.slide_time)
@@ -1691,6 +1710,49 @@ class SlideShow(QtWidgets.QLabel):
         self.timer.stop()
         self.switch_image()
         self.timer.start()
+
+# Global RainViewer metadata cache (shared by all Radar instances)
+radarMetadataCache = {
+    'data': {},
+    'lastupdated': 0,
+    'updateinterval': 600  # refresh every 10 minutes (same as tile intervals)
+}
+radarMetadataReply = None
+
+
+def get_rainviewer_metadata():
+    """Fetch RainViewer metadata once globally, shared by all radar instances"""
+    global manager, radarMetadataCache, radarMetadataReply
+
+    # Check if the cache is still fresh (updated within the last 10 minutes)
+    if time.time() - radarMetadataCache['lastupdated'] < radarMetadataCache['updateinterval']:
+        return
+
+    metadataurl = 'https://api.rainviewer.com/public/weather-maps.json'
+    print('INFO: Fetching RainViewer metadata: ' + metadataurl)
+    metadatareq = QNetworkRequest(QUrl(metadataurl))
+    radarMetadataReply = manager.get(metadatareq)
+    radarMetadataReply.finished.connect(rainviewer_metadata_finished)
+
+
+def rainviewer_metadata_finished():
+    """Process the RainViewer metadata response"""
+    global radarMetadataCache, radarMetadataReply
+
+    if radarMetadataReply.error() != QNetworkReply.NoError:
+        metadatastr = str(radarMetadataReply.readAll(), 'utf-8')
+        print('ERROR: Response from api.rainviewer.com: ' + metadatastr)
+        return
+
+    metadatastr = str(radarMetadataReply.readAll(), 'utf-8')
+    try:
+        radarMetadataCache['data'] = json.loads(metadatastr)
+        radarMetadataCache['lastupdated'] = time.time()
+    except ValueError:  # includes json.decoder.JSONDecodeError
+        print('WARNING:', traceback.format_exc())
+        print('WARNING: Response from api.rainviewer.com: ' + metadatastr)
+        return
+
 
 
 class Radar(QtWidgets.QLabel):
@@ -1806,6 +1868,7 @@ class Radar(QtWidgets.QLabel):
         self.overlayreply = None
 
     def rtick(self):
+        """Update radar display at regular intervals"""
         if time.time() > (self.lastget + self.interval):
             self.get(int(time.time()))
             self.lastget = time.time()
@@ -1827,6 +1890,7 @@ class Radar(QtWidgets.QLabel):
             self.displayedFrame = 0
 
     def get(self, t=0):
+        """Retrieve radar tiles for a specific time or the current base time."""
         t = int(t / 600) * 600
         if t > 0:
             if self.baseTime == t:
@@ -1842,36 +1906,102 @@ class Radar(QtWidgets.QLabel):
         self.frameImages = newf
         firstt = t - self.anim * 600
         for tt in range(firstt, t + 1, 600):
-            print('INFO: ' + self.myname + '... get radar tiles for time ' + str(tt) +
-                  ' (' + str(datetime.datetime.fromtimestamp(tt).astimezone(tzlocal.get_localzone())) + ')')
+#            print('INFO: ' + self.myname + '... get radar tiles for time ' + str(tt) +
+#                  ' (' + str(datetime.datetime.fromtimestamp(tt).astimezone(tzlocal.get_localzone())) + ')')
+            print(f'INFO: {self.myname} fetching radar tiles for time {tt} '
+                  f'({datetime.datetime.fromtimestamp(tt).astimezone(tzlocal.get_localzone())})')
             gotit = False
             for f in self.frameImages:
                 if f['time'] == tt:
                     gotit = True
             if not gotit:
-                self.get_tiles(tt)
-                break
+#                self.get_tiles(tt)
+#                break
+                # Try to get tiles for this time, but continue to the next time if unavailable
+                if self.get_tiles(tt):
+                    break  # Successfully started fetching, stop loop to wait for async completion
 
     def get_tiles(self, t, i=0):
+        """Build tile URLs from metadata and fetch them
+
+        Returns True if tiles were successfully queued for fetching, False if unavailable
+        """
         t = int(t / 600) * 600
         self.getTime = t
         self.getIndex = i
+
         if i == 0:
             self.tileurls = []
             self.tileQimages = []
+
+            # Find the matching radar frame from metadata for this timestamp
+            radarpath = self.find_radar_path_for_time(t)
+            if not radarpath:
+                print(f'WARNING: {self.myname} no radar data available for time {t}')
+                return False  # No data available, caller should try the next timestamp
+
+            host = radarMetadataCache['data'].get('host', 'https://tilecache.rainviewer.com')
+
+            # Build the tile URLs using the frame path from API and our tile parameters
             for tt in self.tiletails:
-                tileurl = 'https://tilecache.rainviewer.com/v2/radar/%d/%s' \
-                          % (t, tt)
+#                tileurl = 'https://tilecache.rainviewer.com/v2/radar/%d/%s' \
+#                          % (t, tt)
+                tileurl = host + radarpath + '/' + tt
                 self.tileurls.append(tileurl)
-        print('INFO: ' + self.myname + ' tile' + str(self.getIndex) + ' ' + self.tileurls[i])
+#        print('INFO: ' + self.myname + ' tile' + str(self.getIndex) + ' ' + self.tileurls[i])
+
+
+        print(f'INFO: {self.myname} {t} tile{self.getIndex} {self.tileurls[i]}')
         tilereq = QNetworkRequest(QUrl(self.tileurls[i]))
         self.tilereply = manager.get(tilereq)
         self.tilereply.finished.connect(self.get_tilesreply)
+        return True  # Successfully queued for fetching
+
+    def find_radar_path_for_time(self, timestamp):
+        """Find the radar path from metadata that matches the requested timestamp
+
+        Since the API provides 10-minute interval frames, find the closest available frame
+        """
+        if not radarMetadataCache['data'] or 'radar' not in radarMetadataCache['data']:
+            return None
+
+        past_frames = radarMetadataCache['data']['radar'].get('past', [])
+        if not past_frames:
+            return None
+
+        # Look for the exact match or the closest frame
+        closest_frame = None
+        closest_diff = float('inf')
+
+        for frame in past_frames:
+            frame_time = frame.get('time')
+            if frame_time is None:
+                continue
+
+            time_diff = abs(frame_time - timestamp)
+
+            # Prefer an exact match or very close match (within 5 minutes of drift)
+            if time_diff < closest_diff:
+                closest_diff = time_diff
+                closest_frame = frame
+
+                # If we found an exact match, use it
+                if time_diff == 0:
+                    break
+
+        if closest_frame and closest_diff <= 300:  # 5-minute tolerance
+            path = closest_frame.get('path')
+            if path:
+                return path
+
+        return None
 
     def get_tilesreply(self):
+        """Process the radar tile response"""
         if self.tilereply.error() != QNetworkReply.NoError:
             tilestr = str(self.tilereply.readAll(), 'utf-8')
-            print('ERROR: Response from rainviewer.com: ' + tilestr)
+#            print('ERROR: Response from rainviewer.com: ' + tilestr)
+            print(f'ERROR: Response from rainviewer.com: {tilestr}')
             return
         self.tileQimages.append(QImage())
         try:
@@ -1888,6 +2018,7 @@ class Radar(QtWidgets.QLabel):
 
     def combine_tiles(self):
         # create weather radar image
+        """Combine the radar tiles into a single image"""
         ii = QImage(self.tilesWidth * 256, self.tilesHeight * 256, QImage.Format_ARGB32)
         ii.fill(Qt.transparent)
         painter = QPainter()
@@ -2100,6 +2231,7 @@ class Radar(QtWidgets.QLabel):
         self.overlayreply.finished.connect(self.overlayfinished)
 
     def start(self, interval=0):
+        """Start the radar display with an optional interval override"""
         if interval > 0:
             self.interval = interval
         self.getbase()
