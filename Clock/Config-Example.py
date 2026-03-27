@@ -6,17 +6,15 @@ from GoogleMercatorProjection import LatLng  # NOQA
 # LOCATION(S)
 # Further radar configuration (zoom, marker location) can be
 # completed under the RADAR section
-primary_coordinates = 44.9764016, -93.2486732  # Change to your Lat/Lon
+primary_coordinates = 00.0000000, -00.0000000  # Change to your Lat/Lon
 
 # Location for weather report
 location = LatLng(primary_coordinates[0], primary_coordinates[1])
 # Default radar location
 radar_location = LatLng(primary_coordinates[0], primary_coordinates[1])
 
-noaastream = 'http://www.urberg.net:8000/tim273/edina'
+noaastream = 'https://radio.weatherusa.net/NWR/KEB98.mp3' # Change to local NOAA stream
 background = 'images/mesa.jpg'
-squares1 = 'images/squares1-kevin.png.bak'
-squares2 = 'images/squares2-kevin.png.bak'
 icons = 'icons-lightblue'
 textcolor = '#FFFFFF'
 clockface = 'images/clockface3.png'
@@ -26,9 +24,9 @@ sechand = 'images/sechand.png'
 
 # SlideShow
 useslideshow = 1  # 1 to enable, 0 to disable
-slide_time = 600  # in seconds, 3600 per hour
+slide_time = 300  # in seconds, 3600 per hour
 slide_bg_color = '#000'  # https://htmlcolorcodes.com/  black #000
-slideshow_url = 'https://example.com/slideshow.txt' # must be plaintext formated, one image URL per line. Github works well for this
+slideshow_url = 'https://example.com/slideshow.txt' # must be text file, one image per line
 
 # Set to Digital Mode
 digital = 1  # 1 = Digital Clock, 0 = Analog Clock
@@ -39,14 +37,8 @@ digitalformat2 = '{0:%-I:%M:%S %p}'  # Format of the digital time on second scre
 
 # Mapbox map styles, need API key (mbapi in ApiKeys.py)
 # If no Mapbox API is set, Google Maps are used
-map_base = 'andrewhover/cm3lvxmyi00k601rygq9vcjgo'  # Custom dark Mapbox style for land and water only (bottom layer that goes below weather radar)
-# map_overlay = 'bcurley/cj712r01c0bw62rm9isme3j8c'  # Custom Mapbox style for labels, roads, and borders only (top layer that goes above weather radar)
-# map_base = 'mapbox/satellite-streets-v12'  # Uncomment for standard Mapbox Satellite Streets style, and comment/remove the custom style
-# map_base = 'mapbox/streets-v12'  # Uncomment for standard Mapbox Streets style, and comment/remove the custom style
-# map_base = 'mapbox/outdoors-v12'  # Uncomment for standard Mapbox Outdoors style, and comment/remove the custom style
-# map_base = 'andrewhover/cm3f6hann001u01s13wl6hf7a'  # Uncomment for standard Mapbox Dark style, and comment/remove the custom style
-# map_base = 'mapbox/cj5l80zrp29942rmtg0zctjto'  # Mapbox calls this map style 'Decimal'
-map_overlay = 'andrewhover/cm3f7fhze001i01ry1o3m600s'  # Uncomment and leave blank if using standard Mapbox style, and comment/remove the custom style
+map_base = 'andrewhover/cm3lvxmyi00k601rygq9vcjgo'  # Custom Google Maps inspired satelite style base
+map_overlay = 'andrewhover/cm3f7fhze001i01ry1o3m600s'  # Custom Google Maps inspired style overlay
 
 # For more Mapbox styles, see https://docs.mapbox.com/api/maps/styles/
 # To create custom Mapbox styles, sign-in at https://studio.mapbox.com/
@@ -69,7 +61,7 @@ fontattr = 'font-weight: bold;'
 
 # These are to dim the radar images, if needed.
 # see and try Config-Example-Bedside.py
-dimcolor = QColor('#000000')
+dimcolor = QColor('#00000')
 dimcolor.setAlpha(0)
 
 # Optional Current conditions replaced with observations from a METAR station
@@ -108,8 +100,8 @@ LSunRise = 'Sun Rise: '
 LSet = ' | Set: '
 LMoonPhase = ' | Moon: '
 LInsideTemp = 'Inside Temp '
-LRain = 'Rain: '
-LSnow = 'Snow: '
+LRain = '| Rain: '
+LSnow = '| Snow: '
 Lmoon1 = 'New Moon'
 Lmoon2 = 'Waxing Crescent'
 Lmoon3 = 'First Quarter'
@@ -158,7 +150,7 @@ Ltm_code_map = {
 # LatLng(44.9764016,-93.2486732),
 radar1 = {
     'center': radar_location,  # the center of your radar block
-    'zoom': 10,  # this is a maps zoom factor, bigger = smaller area
+    'zoom': 7,  # this is a maps zoom factor, bigger = smaller area
     'basemap': map_base,  # Mapbox style for standard map or custom map with land and water only
     'overlay': map_overlay,  # Mapbox style for labels, roads, and borders only
     'color': 4,  # rainviewer radar color scheme:
@@ -171,14 +163,14 @@ radar1 = {
             'location': radar_location,
             'color': 'red',
             'size': 'small',
-            'image': 'teardrop-dot',  # optional image from the markers folder
+            'image': 'teardrop-home',  # optional image from the markers folder
         },  # dangling comma is on purpose.
     )
 }
 
 radar2 = {
     'center': radar_location,
-    'zoom': 8,
+    'zoom': 4,
     'basemap': map_base,
     'overlay': map_overlay,
     'color': 4,
@@ -190,31 +182,12 @@ radar2 = {
             'location': radar_location,
             'color': 'red',
             'size': 'small',
-            'image': 'teardrop-dot',
+            'image': 'teardrop-home',
         },
     )
 }
 
 radar3 = {
-    'center': radar_location,
-    'zoom': 5,
-    'basemap': map_base,
-    'overlay': map_overlay,
-    'color': 4,
-    'smooth': 1,
-    'snow': 1,
-    'markers': (
-        {
-            'visible': 1,
-            'location': radar_location,
-            'color': 'red',
-            'size': 'small',
-            'image': 'teardrop-dot',
-        },
-    )
-}
-
-radar4 = {
     'center': radar_location,
     'zoom': 7,
     'basemap': map_base,
@@ -228,7 +201,26 @@ radar4 = {
             'location': radar_location,
             'color': 'red',
             'size': 'small',
-            'image': 'teardrop-dot',
+            'image': 'teardrop-home',
+        },
+    )
+}
+
+radar4 = {
+    'center': radar_location,
+    'zoom': 4,
+    'basemap': map_base,
+    'overlay': map_overlay,
+    'color': 4,
+    'smooth': 1,
+    'snow': 1,
+    'markers': (
+        {
+            'visible': 1,
+            'location': radar_location,
+            'color': 'red',
+            'size': 'small',
+            'image': 'teardrop-home',
         },
     )
 }

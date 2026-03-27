@@ -24,7 +24,6 @@ from PyQt5.QtGui import QPainter, QImage, QFont
 from PyQt5.QtGui import QPixmap, QBrush, QColor
 from PyQt5.QtNetwork import QNetworkReply
 from PyQt5.QtNetwork import QNetworkRequest
-# from timezonefinder import TimezoneFinder
 from tzfpy import get_tz
 
 sys.dont_write_bytecode = True
@@ -1194,7 +1193,7 @@ def wxfinished_tm_hourly():
                         s += Config.LSnow + '%.0f' % pop + '% ' + '\n' + 'Accumulation: ' + '%.2f' % saccum + ' in'
 
         wx.setStyleSheet('#wx { font-size: ' + str(int(17 * xscale * Config.fontmult)) + 'px; }')
-        if pop >=1 and saccum >= 0.10 or raccum >= 0.10:
+        if pop >=1 and (saccum >= 0.10 or raccum >= 0.10):
             wx.setText(tm_code_map[f['values']['weatherCode']] + '\n' + s)
         else:
             wx.setText('\n' + tm_code_map[f['values']['weatherCode']] + '\n' + s)
@@ -1294,11 +1293,6 @@ def wxfinished_tm_daily():
                     s += Config.LRain + '%.0f' % pop + '%'
                 elif ptype == 2 and saccum == 0.00 and raccum == 0.00:
                     s += Config.LSnow + '%.0f' % pop + '%'
-#            if pop >=1 and ptype == 0:
-#                s += 'No Precipitation'
-#            if pop == 0:
-#                s += 'No Precipitation'
-            
 
             # Logic to show rain or snow probability, followed by projected accumulations in forecast
 
@@ -1702,11 +1696,6 @@ def qtstart():
             pass
 
     dt = datetime.datetime.now(tz=tzlocal.get_localzone())
-#    tf = TimezoneFinder()
-#    tzlatlngstr = tf.timezone_at(lng=Config.location.lng, lat=Config.location.lat)
-#    tzlatlng = pytz.timezone(tzlatlngstr)
-#    sun = SunTimes(Config.location.lat, Config.location.lng, tzlatlng)
-
     tzlatlngstr = get_tz(Config.location.lng, Config.location.lat)
     if tzlatlngstr:
         tzlatlng = pytz.timezone(tzlatlngstr)
@@ -3169,7 +3158,7 @@ manager = QtNetwork.QNetworkAccessManager()
 stimer = QtCore.QTimer()
 stimer.singleShot(10, qtstart)
 
-# Comment out w.show() to prevent issues on Wayland based systems
+# Comment out w.show() to prevent issues on Wayland based systems. Uncomment on RPi systems.
 # w.show()
 w.showFullScreen()
 
