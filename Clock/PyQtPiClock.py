@@ -3027,7 +3027,8 @@ manager = QtNetwork.QNetworkAccessManager()
 stimer = QtCore.QTimer()
 stimer.singleShot(10, qtstart)
 
-w.show()
+# Comment out w.show() to prevent issues on Wayland based systems
+# w.show()
 w.showFullScreen()
 
 sys.exit(app.exec_())
