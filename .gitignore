@@ -79,3 +79,4 @@ venv/bin/timezonefinder
 venv/pyvenv.cfg
 Clock/slideshow.py
 .DS_Store
+Clock/PyQtPiClock-radar-sync.py

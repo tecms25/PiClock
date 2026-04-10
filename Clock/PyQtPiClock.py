@@ -2075,11 +2075,8 @@ class Radar(QtWidgets.QLabel):
 
             # Build the tile URLs using the frame path from API and our tile parameters
             for tt in self.tiletails:
-#                tileurl = 'https://tilecache.rainviewer.com/v2/radar/%d/%s' \
-#                          % (t, tt)
                 tileurl = host + radarpath + '/' + tt
                 self.tileurls.append(tileurl)
-#        print('INFO: ' + self.myname + ' tile' + str(self.getIndex) + ' ' + self.tileurls[i])
 
 
         print(f'INFO: {self.myname} {t} tile{self.getIndex} {self.tileurls[i]}')
