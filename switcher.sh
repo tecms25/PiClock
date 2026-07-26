@@ -1,5 +1,6 @@
 #!/bin/bash
-cd "$HOME"/PiClock || exit
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" >/dev/null 2>&1 && pwd)"
+cd "$SCRIPT_DIR" || exit
 pkill -INT -f PyQtPiClock.py
 # virtual environment
 echo "Activating virtual environment..."

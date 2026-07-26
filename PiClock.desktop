@@ -7,4 +7,4 @@ Exec=/bin/bash -c "/bin/bash ~/PiClock/startup.sh -m 3"
 StartupNotify=false
 Terminal=false
 Hidden=false
-Icon=/home/pi/PiClock/Clock/icons-lightblue/thunderstorm.png
+Icon=$HOME/PiClock/Clock/icons-lightblue/thunderstorm.png

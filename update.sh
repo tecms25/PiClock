@@ -1,7 +1,8 @@
 #!/bin/bash
 # Update script for the PiClock
 
-cd "$HOME"/PiClock || exit
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" >/dev/null 2>&1 && pwd)"
+cd "$SCRIPT_DIR" || exit
 
 # check if virtual environment exists
 if [ -f "venv/bin/activate" ]; then

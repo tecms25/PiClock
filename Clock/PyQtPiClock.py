@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-                 # NOQA
 
 import datetime
+import hashlib
 import json
 import locale
 import math
@@ -11,24 +12,74 @@ import signal
 import sys
 import time
 import traceback
-import requests
-from subprocess import Popen
-
 import dateutil.parser
 import pytz
 import tzlocal
-from PyQt5 import QtGui, QtCore, QtNetwork, QtWidgets
-from PyQt5.QtCore import QUrl
-from PyQt5.QtCore import Qt
-from PyQt5.QtGui import QPainter, QImage, QFont
-from PyQt5.QtGui import QPixmap, QBrush, QColor
-from PyQt5.QtNetwork import QNetworkReply
-from PyQt5.QtNetwork import QNetworkRequest
+from subprocess import Popen
+from urllib.parse import urlparse
+from PyQt6 import QtGui, QtCore, QtNetwork, QtWidgets
+from PyQt6.QtCore import QUrl
+from PyQt6.QtCore import Qt
+from PyQt6.QtGui import QPainter, QImage, QFont
+from PyQt6.QtGui import QPixmap, QBrush, QColor
+from PyQt6.QtNetwork import QNetworkReply
+from PyQt6.QtNetwork import QNetworkRequest
 from tzfpy import get_tz
 
 sys.dont_write_bytecode = True
 from GoogleMercatorProjection import get_corners, get_point, get_tile_xy, LatLng  # NOQA
 import ApiKeys  # NOQA
+
+
+def _qt_message_handler(msg_type, context, message):
+    # "QIODevice::read (QSslSocket): device not open" is harmless Qt
+    # networking noise: it happens when a pooled keep-alive HTTPS connection
+    # gets closed by the remote server between requests. Qt's own network
+    # backend detects this and transparently reconnects, so it's silently
+    # dropped here instead of spamming the console every few minutes.
+    if 'device not open' in message:
+        return
+    sys.stderr.write(message + '\n')
+
+
+QtCore.qInstallMessageHandler(_qt_message_handler)
+
+# --- Short-lived disk cache for weather/radar API responses ---
+# Repeatedly restarting the app (e.g. during development) would otherwise
+# re-issue every weather/radar API call on every launch; this replays a
+# recent-enough response from disk instead, independent of whatever caching
+# headers (if any) a given API happens to send.
+API_CACHE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'api_cache')
+os.makedirs(API_CACHE_DIR, exist_ok=True)
+
+
+def api_cache_path(url):
+    return os.path.join(API_CACHE_DIR, hashlib.sha1(url.encode('utf-8')).hexdigest() + '.cache')
+
+
+def api_cache_read(url, max_age_seconds):
+    """Return cached response bytes for url if a fresh-enough entry exists on disk, else None."""
+    path = api_cache_path(url)
+    try:
+        age = time.time() - os.path.getmtime(path)
+    except OSError:
+        return None
+    if age > max_age_seconds:
+        return None
+    try:
+        with open(path, 'rb') as f:
+            return f.read()
+    except OSError:
+        return None
+
+
+def api_cache_write(url, data):
+    try:
+        with open(api_cache_path(url), 'wb') as f:
+            f.write(data)
+    except OSError as e:
+        print(f'WARNING: unable to write API cache for {url}: {e}')
+
 
 # --- Daily log rotation (at local midnight), keeping PyQtPiClock.1.log ... .7.log ---
 class _DailyRotatingLineLogger:
@@ -293,8 +344,6 @@ def moon_phase(dt=None):
 
 
 def tick():
-    global hourpixmap, minpixmap, secpixmap
-    global hourpixmap2, minpixmap2, secpixmap2
     global lastmin, lastday, lasttimestr
     global clockrect
     global datex, datex2, datey2, pdy
@@ -302,68 +351,13 @@ def tick():
     global bottom
 
     now = datetime.datetime.now(tz=tzlocal.get_localzone())
-    if Config.digital:
-        timestr = Config.digitalformat.format(now)
-        if Config.digitalformat.find('%I') > -1:
-            if timestr[0] == '0':
-                timestr = timestr[1:99]
-        if lasttimestr != timestr:
-            clockface.setText(timestr.lower())
-        lasttimestr = timestr
-    else:
-        angle = now.second * 6
-        ts = secpixmap.size()
-        secpixmap2 = secpixmap.transformed(
-            QtGui.QTransform().scale(
-                float(clockrect.width()) / ts.height(),
-                float(clockrect.height()) / ts.height()
-            ).rotate(angle),
-            Qt.SmoothTransformation
-        )
-        sechand.setPixmap(secpixmap2)
-        ts = secpixmap2.size()
-        sechand.setGeometry(
-            int(clockrect.center().x() - ts.width() / 2),
-            int(clockrect.center().y() - ts.height() / 2),
-            ts.width(),
-            ts.height()
-        )
-        if now.minute != lastmin:
-            angle = now.minute * 6
-            ts = minpixmap.size()
-            minpixmap2 = minpixmap.transformed(
-                QtGui.QTransform().scale(
-                    float(clockrect.width()) / ts.height(),
-                    float(clockrect.height()) / ts.height()
-                ).rotate(angle),
-                Qt.SmoothTransformation
-            )
-            minhand.setPixmap(minpixmap2)
-            ts = minpixmap2.size()
-            minhand.setGeometry(
-                int(clockrect.center().x() - ts.width() / 2),
-                int(clockrect.center().y() - ts.height() / 2),
-                ts.width(),
-                ts.height()
-            )
-
-            angle = ((now.hour % 12) + now.minute / 60.0) * 30.0
-            ts = hourpixmap.size()
-            hourpixmap2 = hourpixmap.transformed(
-                QtGui.QTransform().scale(
-                    float(clockrect.width()) / ts.height(),
-                    float(clockrect.height()) / ts.height()
-                ).rotate(angle),
-                Qt.SmoothTransformation
-            )
-            hourhand.setPixmap(hourpixmap2)
-            ts = hourpixmap2.size()
-            hourhand.setGeometry(
-                int(clockrect.center().x() - ts.width() / 2),
-                int(clockrect.center().y() - ts.height() / 2),
-                ts.width(),
-                ts.height()
-            )
+    timestr = Config.digitalformat.format(now)
+    if Config.digitalformat.find('%I') > -1:
+        if timestr[0] == '0':
+            timestr = timestr[1:99]
+    if lasttimestr != timestr:
+        clockface.setText(timestr.lower())
+    lasttimestr = timestr
 
     dy = Config.digitalformat2.format(now)
     if Config.digitalformat2.find('%I') > -1:
@@ -408,9 +402,42 @@ def tick():
         bottom.setText(bottomtext)
 
 
+CURSOR_POLL_MS = 250
+cursor_hidden = False
+cursor_last_pos = None
+cursor_idle_elapsed = 0.0
+
+
+def cursor_idle_tick():
+    """Hide the mouse cursor after a period of inactivity, show it again on movement.
+
+    Polls the global cursor position instead of relying on a platform-specific
+    tool, so it behaves the same on every OS.
+    """
+    global cursor_hidden, cursor_last_pos, cursor_idle_elapsed
+
+    if Config.cursor_idle_seconds <= 0:
+        return
+
+    pos = QtGui.QCursor.pos()
+    if pos != cursor_last_pos:
+        cursor_last_pos = pos
+        cursor_idle_elapsed = 0.0
+        if cursor_hidden:
+            QtWidgets.QApplication.restoreOverrideCursor()
+            cursor_hidden = False
+        return
+
+    cursor_idle_elapsed += CURSOR_POLL_MS / 1000.0
+    if cursor_idle_elapsed >= Config.cursor_idle_seconds and not cursor_hidden:
+        QtWidgets.QApplication.setOverrideCursor(Qt.CursorShape.BlankCursor)
+        cursor_hidden = True
+
+
 def tempfinished():
     global tempreply, temp
-    if tempreply.error() != QNetworkReply.NoError:
+    tempreply.deleteLater()
+    if tempreply.error() != QNetworkReply.NetworkError.NoError:
         return
     tempstr = str(tempreply.readAll(), 'utf-8')
     try:
@@ -517,440 +544,6 @@ def gettemp():
     tempreply.finished.connect(tempfinished)
 
 
-owm_code_icons = {
-    '01d': 'clear-day',
-    '02d': 'partly-cloudy-day',
-    '03d': 'partly-cloudy-day',
-    '04d': 'cloudy',
-    '09d': 'rain',
-    '10d': 'rain',
-    '11d': 'thunderstorm',
-    '13d': 'snow',
-    '50d': 'fog',
-    '01n': 'clear-night',
-    '02n': 'partly-cloudy-night',
-    '03n': 'partly-cloudy-night',
-    '04n': 'cloudy',
-    '09n': 'rain',
-    '10n': 'rain',
-    '11n': 'thunderstorm',
-    '13n': 'snow',
-    '50n': 'fog'
-}
-
-
-def wxfinished_owm_onecall():
-    global wxreply, hasMetar
-    global wxicon, temper, wxdesc, press, humidity
-    global wind, feelslike, wdate, forecast
-    global wxicon2, temper2, wxdesc2, attribution
-    global owmonecall
-
-    attribution.setText('')
-    attribution2.setText('')
-
-    wxstr = str(wxreply.readAll(), 'utf-8')
-
-    try:
-        wxdata = json.loads(wxstr)
-    except ValueError:  # includes json.decoder.JSONDecodeError
-        print('WARNING:', traceback.format_exc())
-        print('WARNING: Response from api.openweathermap.org: ' + wxstr)
-        print('WARNING: Moving on...')
-        return  # ignore and try again on the next refresh
-
-    if 'cod' in wxdata:
-        print('WARNING: Response from api.openweathermap.org: ' + str(wxdata['cod']) + ' - ' + str(wxdata['message']))
-        if wxdata['cod'] == 401:  # Invalid API
-            print('WARNING: OpenWeather One Call failed...')
-            print('WARNING: Falling back to separate OpenWeather calls for current weather conditions and forecast')
-            owmonecall = False
-            getwx_owm()
-        return
-
-    if not hasMetar:
-        f = wxdata['current']
-        dt = datetime.datetime.fromtimestamp(int(f['dt'])).astimezone(tzlocal.get_localzone())
-        icon = f['weather'][0]['icon']
-        icon = owm_code_icons[icon]
-        wxiconpixmap = QtGui.QPixmap(Config.icons + '/' + icon + '.png')
-        wxicon.setPixmap(wxiconpixmap.scaled(
-            wxicon.width(), wxicon.height(), Qt.IgnoreAspectRatio,
-            Qt.SmoothTransformation))
-        wxicon2.setPixmap(wxiconpixmap.scaled(
-            wxicon.width(),
-            wxicon.height(),
-            Qt.IgnoreAspectRatio,
-            Qt.SmoothTransformation))
-        wxdesc.setText(f['weather'][0]['description'].title())
-        wxdesc2.setText(f['weather'][0]['description'].title())
-
-        if Config.wind_degrees:
-            wd = str(f['wind_deg']) + u'°'
-        else:
-            wd = bearing(f['wind_deg'])
-
-        if Config.metric:
-            temper.setText('%.1f' % (tempf2tempc(f['temp'])) + u'°C')
-            temper2.setText('%.1f' % (tempf2tempc(f['temp'])) + u'°C')
-            w = (Config.LWind + wd + ' ' + '%.1f' % (mph2kph(f['wind_speed'])) + 'km/h')
-            if 'wind_gust' in f:
-                w += (Config.Lgusting + '%.1f' % (mph2kph(f['wind_gust'])) + 'km/h')
-            feelslike.setText(Config.LFeelslike + '%.1f' % (tempf2tempc(f['feels_like'])) + u'°C')
-        else:
-            temper.setText('%.1f' % (f['temp']) + u'°F')
-            temper2.setText('%.1f' % (f['temp']) + u'°F')
-            w = (Config.LWind + wd + ' ' + '%.1f' % (f['wind_speed']) + 'mph')
-            if 'wind_gust' in f:
-                w += (Config.Lgusting + '%.1f' % (f['wind_gust']) + 'mph')
-            feelslike.setText(Config.LFeelslike + '%.1f' % (f['feels_like']) + u'°F')
-
-        if Config.pressure_mbar:
-            press.setText(Config.LPressure + '%.1f' % f['pressure'] + 'mbar')
-        else:
-            press.setText(Config.LPressure + '%.2f' % mbar2inhg(f['pressure']) + 'inHg')
-
-        wind.setText(w)
-        humidity.setText(Config.LHumidity + '%.0f%%' % (f['humidity']))
-        wdate.setText('{0:%H:%M %Z}'.format(dt))
-
-    for i in range(0, 3):
-        f = wxdata['hourly'][i * 3 + 2]
-        dt = datetime.datetime.fromtimestamp(int(f['dt'])).astimezone(tzlocal.get_localzone())
-        fl = forecast[i]
-        wicon = f['weather'][0]['icon']
-        wicon = owm_code_icons[wicon]
-        icon = fl.findChild(QtWidgets.QLabel, 'icon')
-        wxiconpixmap = QtGui.QPixmap(Config.icons + '/' + wicon + '.png')
-        icon.setPixmap(wxiconpixmap.scaled(
-            icon.width(),
-            icon.height(),
-            Qt.IgnoreAspectRatio,
-            Qt.SmoothTransformation))
-        wx = fl.findChild(QtWidgets.QLabel, 'wx')
-        day = fl.findChild(QtWidgets.QLabel, 'day')
-        day.setText('{0:%A %I:%M %p}'.format(dt))
-        s = ''
-        pop = 0
-        ptype = ''
-        paccum = 0
-        if 'pop' in f:
-            pop = float(f['pop']) * 100.0
-        if 'snow' in f:
-            ptype = 'snow'
-            paccum = float(f['snow']['1h'])
-        if 'rain' in f:
-            ptype = 'rain'
-            paccum = float(f['rain']['1h'])
-
-        if pop > 0.0 or ptype != '':
-            s += '%.0f' % pop + '% '
-        if Config.metric:
-            if ptype == 'snow':
-                if paccum > 0.1:
-                    s += Config.LSnow + '%.1f' % paccum + 'mm/hr '
-            else:
-                if paccum > 0.1:
-                    s += Config.LRain + '%.1f' % paccum + 'mm/hr '
-            s += '%.0f' % tempf2tempc(f['temp']) + u'°C'
-        else:
-            if ptype == 'snow':
-                if paccum > 2.54:
-                    s += Config.LSnow + '%.1f' % mm2inches(paccum) + 'in/hr '
-            else:
-                if paccum > 2.54:
-                    s += Config.LRain + '%.1f' % mm2inches(paccum) + 'in/hr '
-            s += '%.0f' % (f['temp']) + u'°F'
-
-        wx.setStyleSheet('#wx { font-size: ' + str(int(19 * xscale * Config.fontmult)) + 'px; }')
-        wx.setText(f['weather'][0]['description'].title() + '\n' + s)
-
-    dt = datetime.datetime.fromtimestamp(int(wxdata['daily'][0]['dt'])).astimezone(tzlocal.get_localzone())
-    date_offset = 0
-    if dt.date() < datetime.datetime.now().date():
-        date_offset = 1
-
-    for i in range(3, 9):
-        f = wxdata['daily'][i - 3 + date_offset]
-        dt = datetime.datetime.fromtimestamp(int(f['dt'])).astimezone(tzlocal.get_localzone())
-        wicon = f['weather'][0]['icon']
-        wicon = owm_code_icons[wicon]
-        fl = forecast[i]
-        icon = fl.findChild(QtWidgets.QLabel, 'icon')
-        wxiconpixmap = QtGui.QPixmap(Config.icons + '/' + wicon + '.png')
-        icon.setPixmap(wxiconpixmap.scaled(
-            icon.width(),
-            icon.height(),
-            Qt.IgnoreAspectRatio,
-            Qt.SmoothTransformation))
-        wx = fl.findChild(QtWidgets.QLabel, 'wx')
-        day = fl.findChild(QtWidgets.QLabel, 'day')
-        day.setText('{0:%A %m/%d}'.format(dt))
-        s = ''
-        pop = 0
-        ptype = ''
-        paccum = 0
-        if 'pop' in f:
-            pop = float(f['pop']) * 100.0
-        if 'rain' in f:
-            ptype = 'rain'
-            paccum = float(f['rain'])
-        if 'snow' in f:
-            ptype = 'snow'
-            paccum = float(f['snow'])
-
-        if pop > 0.05 or ptype != '':
-            s += '%.0f' % pop + '% '
-        if Config.metric:
-            if ptype == 'snow':
-                if paccum > 0.1:
-                    s += Config.LSnow + '%.1f' % paccum + 'mm '
-            else:
-                if paccum > 0.1:
-                    s += Config.LRain + '%.1f' % paccum + 'mm '
-            s += '%.0f' % tempf2tempc(f['temp']['max']) + '/' + \
-                 '%.0f' % tempf2tempc(f['temp']['min']) + u'°C'
-        else:
-            if ptype == 'snow':
-                if paccum > 2.54:
-                    s += Config.LSnow + '%.1f' % mm2inches(paccum) + 'in '
-            else:
-                if paccum > 2.54:
-                    s += Config.LRain + '%.1f' % mm2inches(paccum) + 'in '
-            s += '%.0f' % f['temp']['max'] + '/' + \
-                 '%.0f' % f['temp']['min'] + u'°F'
-
-        wx.setStyleSheet('#wx { font-size: ' + str(int(19 * xscale * Config.fontmult)) + 'px; }')
-        wx.setText(f['weather'][0]['description'].title() + '\n' + s)
-
-
-def wxfinished_owm_current():
-    global wxreplyc
-    global wxicon, temper, wxdesc, press, humidity
-    global wind, feelslike, wdate
-    global wxicon2, temper2, wxdesc2
-
-    wxstr = str(wxreplyc.readAll(), 'utf-8')
-
-    try:
-        wxdata = json.loads(wxstr)
-    except ValueError:  # includes json.decoder.JSONDecodeError
-        print('WARNING:', traceback.format_exc())
-        print('WARNING: Response from api.openweathermap.org: ' + wxstr)
-        print('WARNING: Moving on...')
-        return  # ignore and try again on the next refresh
-
-    if 'message' in wxdata:
-        print('ERROR: Response from api.openweathermap.org: ' + str(wxdata['cod']) + ' - ' + str(wxdata['message']))
-        return
-
-    f = wxdata
-    dt = datetime.datetime.fromtimestamp(int(f['dt'])).astimezone(tzlocal.get_localzone())
-    icon = f['weather'][0]['icon']
-    icon = owm_code_icons[icon]
-    wxiconpixmap = QtGui.QPixmap(Config.icons + "/" + icon + ".png")
-    wxicon.setPixmap(wxiconpixmap.scaled(
-        wxicon.width(), wxicon.height(), Qt.IgnoreAspectRatio,
-        Qt.SmoothTransformation))
-    wxicon2.setPixmap(wxiconpixmap.scaled(
-        wxicon.width(),
-        wxicon.height(),
-        Qt.IgnoreAspectRatio,
-        Qt.SmoothTransformation))
-    wxdesc.setText(f['weather'][0]['description'].title())
-    wxdesc2.setText(f['weather'][0]['description'].title())
-
-    if Config.wind_degrees:
-        wd = str(f['wind']['deg']) + u'°'
-    else:
-        wd = bearing(f['wind']['deg'])
-
-    if Config.metric:
-        temper.setText('%.1f' % (tempf2tempc(f['main']['temp'])) + u'°C')
-        temper2.setText('%.1f' % (tempf2tempc(f['main']['temp'])) + u'°C')
-        w = (Config.LWind + wd + ' ' + '%.1f' % (mph2kph(f['wind']['speed'])) + 'km/h')
-        if 'gust' in f['wind']:
-            w += (Config.Lgusting + '%.1f' % (mph2kph(f['wind']['gust'])) + 'km/h')
-        feelslike.setText(Config.LFeelslike + '%.1f' % (tempf2tempc(f['main']['feels_like'])) + u'°C')
-    else:
-        temper.setText('%.1f' % (f['main']['temp']) + u'°F')
-        temper2.setText('%.1f' % (f['main']['temp']) + u'°F')
-        w = (Config.LWind + wd + ' ' + '%.1f' % (f['wind']['speed']) + ' mph |')
-        if 'gust' in f['wind']:
-            w += (Config.Lgusting + '%.1f' % (f['wind']['gust']) + ' mph')
-        feelslike.setText(Config.LFeelslike + '%.1f' % (f['main']['feels_like']) + u'°F')
-
-    if Config.pressure_mbar:
-        press.setText(Config.LPressure + '%.1f' % f['main']['pressure'] + 'mbar')
-    else:
-        press.setText(Config.LPressure + '%.2f' % mbar2inhg(f['main']['pressure']) + 'in')
-
-    wind.setText(w)
-    humidity.setText(Config.LHumidity + '%.0f%%' % (f['main']['humidity']))
-    wdate.setText(''.format(dt))
-
-
-def wxfinished_owm_forecast():
-    global wxreplyf, forecast
-    global attribution
-    global tzlatlng
-
-    attribution.setText('')
-    attribution2.setText('')
-
-    wxstr = str(wxreplyf.readAll(), 'utf-8')
-
-    try:
-        wxdata = json.loads(wxstr)
-    except ValueError:  # includes json.decoder.JSONDecodeError
-        print('WARNING:', traceback.format_exc())
-        print('WARNING: Response from api.openweathermap.org: ' + wxstr)
-        print('WARNING: Moving on...')
-        return  # ignore and try again on the next refresh
-
-    if 'message' in wxdata:
-        if wxdata['message']:  # OWM forecast normally includes message of 0... if not 0 or text, print error and return
-            print('ERROR: Response from api.openweathermap.org: ' + str(wxdata['cod']) + ' - ' + str(wxdata['message']))
-            return
-
-    for i in range(0, 3):
-        f = wxdata['list'][i]
-        dt = datetime.datetime.fromtimestamp(int(f['dt'])).astimezone(tzlocal.get_localzone())
-        fl = forecast[i]
-        wicon = f['weather'][0]['icon']
-        wicon = owm_code_icons[wicon]
-        icon = fl.findChild(QtWidgets.QLabel, "icon")
-        wxiconpixmap = QtGui.QPixmap(Config.icons + "/" + wicon + ".png")
-        icon.setPixmap(wxiconpixmap.scaled(
-            icon.width(),
-            icon.height(),
-            Qt.IgnoreAspectRatio,
-            Qt.SmoothTransformation))
-        wx = fl.findChild(QtWidgets.QLabel, "wx")
-        day = fl.findChild(QtWidgets.QLabel, "day")
-        day.setText("{0:%A %I:%M %p}".format(dt))
-        f2 = f['main']
-        s = ''
-        pop = 0
-        ptype = ''
-        paccum = 0
-        if 'pop' in f:
-            pop = float(f['pop']) * 100.0
-        if 'snow' in f:
-            ptype = 'snow'
-            paccum = float(f['snow']['3h'])
-        if 'rain' in f:
-            ptype = 'rain'
-            paccum = float(f['rain']['3h'])
-
-        paccum = paccum / 3.0
-
-        if pop >= 0.1:
-            s += '%.0f' % pop + '% '
-        if Config.metric:
-            if ptype == 'snow':
-                if paccum > 0.1:
-                    s += Config.LSnow + '%.1f' % paccum + 'mm/hr '
-            else:
-                if paccum > 0.1:
-                    s += Config.LRain + '%.1f' % paccum + 'mm/hr '
-            s += '%.0f' % tempf2tempc(f2['temp']) + u'°C'
-        else:
-            if ptype == 'snow':
-                if paccum > 2.54:
-                    s += Config.LSnow + '%.1f' % mm2inches(paccum) + 'in/hr '
-            else:
-                if paccum > 2.54:
-                    s += Config.LRain + '%.1f' % mm2inches(paccum) + 'in/hr '
-            s += '%.0f' % (f2['temp']) + u'°F'
-
-        wx.setStyleSheet("#wx { font-size: " + str(int(19 * xscale * Config.fontmult)) + "px; }")
-        wx.setText(f['weather'][0]['description'].title() + "\n" + s)
-
-    # find 6am in the current timezone (weather day is 6am to 6am next day)
-    dx = datetime.datetime.now(tz=tzlatlng)
-    dx6am = tzlatlng.localize(datetime.datetime(dx.year, dx.month, dx.day, 6, 0, 0))
-    dx6amnext = dx6am + datetime.timedelta(seconds=86399)
-
-    for i in range(3, 9):  # target forecast box
-        s = ''
-        fl = forecast[i]
-        wx = fl.findChild(QtWidgets.QLabel, "wx")
-        day = fl.findChild(QtWidgets.QLabel, "day")
-        icon = fl.findChild(QtWidgets.QLabel, "icon")
-        setday = True
-        has_forecast = False
-        xpop = 0.0  # max
-        rpaccum = 0.0  # total rain
-        spaccum = 0.0  # total snow
-        xmintemp = 9999  # min
-        xmaxtemp = -9999  # max
-        ldesc = []
-        licon = []
-
-        for f in wxdata['list']:
-            dt = datetime.datetime.fromtimestamp(int(f['dt'])).astimezone(tzlocal.get_localzone())
-            if dx6am <= dt <= dx6amnext:
-                if setday:
-                    setday = False
-                    day.setText("{0:%A %m/%d}".format(dt))
-                pop = 0.0
-                if 'pop' in f:
-                    pop = float(f['pop']) * 100.0
-                if 'rain' in f:
-                    paccum = float(f['rain']['3h'])
-                    rpaccum += paccum
-                if 'snow' in f:
-                    paccum = float(f['snow']['3h'])
-                    spaccum += paccum
-                if pop > xpop:
-                    xpop = pop
-                tx = float(f['main']['temp'])
-                if tx > xmaxtemp:
-                    xmaxtemp = tx
-                if tx < xmintemp:
-                    xmintemp = tx
-                has_forecast = True
-                ldesc.append(f['weather'][0]['description'].title())
-                licon.append(f['weather'][0]['icon'])
-
-        if xpop > 0.1:
-            s += '%.0f' % xpop + '% '
-
-        if Config.metric:
-            if spaccum > 0.1:
-                s += Config.LSnow + '%.1f' % spaccum + 'mm '
-            if rpaccum > 0.1:
-                s += Config.LRain + '%.1f' % rpaccum + 'mm '
-            s += '%.0f' % tempf2tempc(xmaxtemp) + '/' + \
-                 '%.0f' % tempf2tempc(xmintemp) + u'°C'
-        else:
-            if spaccum > 2.54:
-                s += Config.LSnow + '%.1f' % mm2inches(spaccum) + 'in '
-            if rpaccum > 2.54:
-                s += Config.LRain + '%.1f' % mm2inches(rpaccum) + 'in '
-            s += '%.0f' % xmaxtemp + '/' + \
-                 '%.0f' % xmintemp + u'°F'
-
-        # when current time is shortly after midnight
-        # there may not be any forecast after 6am for the final day
-        if has_forecast:
-            wicon = getmost(licon)
-            wdesc = getmost(ldesc)
-            wx.setStyleSheet("#wx { font-size: " + str(int(19 * xscale * Config.fontmult)) + "px; }")
-            wx.setText(wdesc + "\n" + s)
-            wicon = owm_code_icons[wicon]
-            wicon = wicon.replace('-night', '-day')
-            wxiconpixmap = QtGui.QPixmap(Config.icons + "/" + wicon + ".png")
-            icon.setPixmap(wxiconpixmap.scaled(
-                icon.width(),
-                icon.height(),
-                Qt.IgnoreAspectRatio,
-                Qt.SmoothTransformation))
-
-        dx6am += datetime.timedelta(1)
-        dx6amnext += datetime.timedelta(1)
-
 
 def getmost(a):
     b = dict((i, a.count(i)) for i in a)  # list to key and counts
@@ -1014,14 +607,18 @@ tm_code_icons = {
 }
 
 
-def wxfinished_tm_current():
+def wxfinished_tm_current(data=None):
     global wxreply
     global wxicon, temper, wxdesc, press, humidity
     global wind, feelslike, wdate
     global wxicon2, temper2, wxdesc2
     global daytime
 
-    wxstr = str(wxreply.readAll(), 'utf-8')
+    if data is None:
+        wxreply.deleteLater()
+        data = bytes(wxreply.readAll())
+        api_cache_write(wxreply.url().toString(), data)
+    wxstr = str(data, 'utf-8')
 
     try:
         wxdata = json.loads(wxstr)
@@ -1044,13 +641,13 @@ def wxfinished_tm_current():
         icon = icon.replace('-day', '-night')
     wxiconpixmap = QtGui.QPixmap(Config.icons + '/' + icon + '.png')
     wxicon.setPixmap(wxiconpixmap.scaled(
-        wxicon.width(), wxicon.height(), Qt.IgnoreAspectRatio,
-        Qt.SmoothTransformation))
+        wxicon.width(), wxicon.height(), Qt.AspectRatioMode.IgnoreAspectRatio,
+        Qt.TransformationMode.SmoothTransformation))
     wxicon2.setPixmap(wxiconpixmap.scaled(
         wxicon.width(),
         wxicon.height(),
-        Qt.IgnoreAspectRatio,
-        Qt.SmoothTransformation))
+        Qt.AspectRatioMode.IgnoreAspectRatio,
+        Qt.TransformationMode.SmoothTransformation))
     wxdesc.setText(tm_code_map[f['values']['weatherCode']])
     wxdesc2.setText(tm_code_map[f['values']['weatherCode']])
 
@@ -1088,14 +685,18 @@ def wxfinished_tm_current():
     wdate.setText('Last Updated: {0:%-I:%M %p}'.format(dt))
 
 
-def wxfinished_tm_hourly():
+def wxfinished_tm_hourly(data=None):
     global wxreply2, forecast
     global daytime, attribution
 
     attribution.setText('')
     attribution2.setText('')
 
-    wxstr2 = str(wxreply2.readAll(), 'utf-8')
+    if data is None:
+        wxreply2.deleteLater()
+        data = bytes(wxreply2.readAll())
+        api_cache_write(wxreply2.url().toString(), data)
+    wxstr2 = str(data, 'utf-8')
 
     try:
         wxdata2 = json.loads(wxstr2)
@@ -1134,8 +735,8 @@ def wxfinished_tm_hourly():
         icon.setPixmap(wxiconpixmap.scaled(
             icon.width(),
             icon.height(),
-            Qt.IgnoreAspectRatio,
-            Qt.SmoothTransformation))
+            Qt.AspectRatioMode.IgnoreAspectRatio,
+            Qt.TransformationMode.SmoothTransformation))
         wx = fl.findChild(QtWidgets.QLabel, 'wx')
         day = fl.findChild(QtWidgets.QLabel, 'day')
         day.setText('{0:%A %-I:%M %p} '.format(dt))
@@ -1154,9 +755,9 @@ def wxfinished_tm_hourly():
         # If no precip type or no precip forcated, show No Precipitation
 
         if pop >= 1 and ptype > 0:
-            if ptype == 1 and raccum == 0.00 and saccum == 0.00:
+            if ptype == 1 and raccum < 0.10 and saccum < 0.10:
                 s += Config.LRain + '%.0f' % pop + '%'
-            elif ptype == 2 and saccum == 0.00 and raccum == 0.00:
+            elif ptype == 2 and saccum < 0.10 and raccum < 0.10:
                 s += Config.LSnow + '%.0f' % pop + '%'
 #        if pop >=1 and ptype == 0:
 #            s += 'No Precipitation'                
@@ -1199,10 +800,14 @@ def wxfinished_tm_hourly():
             wx.setText('\n' + tm_code_map[f['values']['weatherCode']] + '\n' + s)
 
 
-def wxfinished_tm_daily():
+def wxfinished_tm_daily(data=None):
     global wxreply3, forecast
 
-    wxstr3 = str(wxreply3.readAll(), 'utf-8')
+    if data is None:
+        wxreply3.deleteLater()
+        data = bytes(wxreply3.readAll())
+        api_cache_write(wxreply3.url().toString(), data)
+    wxstr3 = str(data, 'utf-8')
 
     try:
         wxdata3 = json.loads(wxstr3)
@@ -1232,8 +837,8 @@ def wxfinished_tm_daily():
             icon.setPixmap(wxiconpixmap.scaled(
                 icon.width(),
                 icon.height(),
-                Qt.IgnoreAspectRatio,
-                Qt.SmoothTransformation))
+                Qt.AspectRatioMode.IgnoreAspectRatio,
+                Qt.TransformationMode.SmoothTransformation))
             wx = fl.findChild(QtWidgets.QLabel, 'wx')
             day = fl.findChild(QtWidgets.QLabel, 'day')
             day.setText('{0:%A %m/%d} '.format(dateutil.parser.parse(f['startTime'])
@@ -1289,9 +894,9 @@ def wxfinished_tm_daily():
             # If no precip type or no precip forcated, show No Precipitation
 
             if pop >= 1 and ptype > 0:
-                if ptype == 1 and raccum == 0.00 and saccum == 0.00:
+                if ptype == 1 and raccum < 0.10 and saccum < 0.10:
                     s += Config.LRain + '%.0f' % pop + '%'
-                elif ptype == 2 and saccum == 0.00 and raccum == 0.00:
+                elif ptype == 2 and saccum < 0.10 and raccum < 0.10:
                     s += Config.LSnow + '%.0f' % pop + '%'
 
             # Logic to show rain or snow probability, followed by projected accumulations in forecast
@@ -1325,7 +930,7 @@ def wxfinished_tm_daily():
 
 
             wx.setStyleSheet('#wx { font-size: ' + str(int(17 * xscale * Config.fontmult)) + 'px; }')
-            if pop >=1 and saccum >= 0.10 or raccum >= 0.10:
+            if pop >= 1 and (saccum >= 0.10 or raccum >= 0.10):
                 wx.setText(tm_code_map[f['values']['weatherCode']] + '\n' + s)
             else:
                 wx.setText('\n' + tm_code_map[f['values']['weatherCode']] + '\n' + s)
@@ -1420,18 +1025,21 @@ def feels_like(f):
     return t
 
 
-def wxfinished_metar():
+def wxfinished_metar(data=None):
     global metarreply
     global wxicon, temper, wxdesc, press, humidity
     global wind, feelslike, wdate
     global wxicon2, temper2, wxdesc2
     global daytime
 
-    wxstr = str(metarreply.readAll(), 'utf-8')
-
-    if metarreply.error() != QNetworkReply.NoError:
-        print('ERROR: Response from nws.noaa.gov: ' + wxstr)
-        return
+    if data is None:
+        metarreply.deleteLater()
+        data = bytes(metarreply.readAll())
+        if metarreply.error() != QNetworkReply.NetworkError.NoError:
+            print('ERROR: Response from nws.noaa.gov: ' + str(data, 'utf-8'))
+            return
+        api_cache_write(metarreply.url().toString(), data)
+    wxstr = str(data, 'utf-8')
 
     for wxline in wxstr.splitlines():
         if wxline.startswith(Config.METAR):
@@ -1483,13 +1091,13 @@ def wxfinished_metar():
 
     wxiconpixmap = QtGui.QPixmap(Config.icons + '/' + icon + '.png')
     wxicon.setPixmap(wxiconpixmap.scaled(
-        wxicon.width(), wxicon.height(), Qt.IgnoreAspectRatio,
-        Qt.SmoothTransformation))
+        wxicon.width(), wxicon.height(), Qt.AspectRatioMode.IgnoreAspectRatio,
+        Qt.TransformationMode.SmoothTransformation))
     wxicon2.setPixmap(wxiconpixmap.scaled(
         wxicon.width(),
         wxicon.height(),
-        Qt.IgnoreAspectRatio,
-        Qt.SmoothTransformation))
+        Qt.AspectRatioMode.IgnoreAspectRatio,
+        Qt.TransformationMode.SmoothTransformation))
     wxdesc.setText(weather)
     wxdesc2.setText(weather)
 
@@ -1569,65 +1177,14 @@ def getallwx():
     except AttributeError:
         pass
 
-    try:
-        ApiKeys.owmapi
-        getwx_owm()
-        return
-    except AttributeError:
-        pass
-
-
-def getwx_owm():
-    global wxreply, wxreplyc, wxreplyf
-    global hasMetar
-    global owmonecall
-    # try OWM One Call once, if it fails, then we go to two calls (current weather and forecast)
-    if owmonecall:
-        wxurl = 'https://api.openweathermap.org/data/3.0/onecall?appid=' + \
-                ApiKeys.owmapi
-    else:
-        wxurl = 'https://api.openweathermap.org/data/2.5/forecast?appid=' + \
-                ApiKeys.owmapi
-
-    wxurl += "&lat=" + str(Config.location.lat) + \
-             '&lon=' + str(Config.location.lng)
-    wxurl += '&units=imperial&lang=' + Config.Language.lower()
-    wxurl += '&r=' + str(random.random())
-
-    if owmonecall:
-        print('INFO: getting OpenWeather One Call: ' + wxurl)
-    else:
-        print('INFO: getting OpenWeather forecast: ' + wxurl)
-
-    r = QUrl(wxurl)
-    r = QNetworkRequest(r)
-
-    if owmonecall:
-        wxreply = manager.get(r)
-        wxreply.finished.connect(wxfinished_owm_onecall)
-    else:
-        wxreplyf = manager.get(r)
-        wxreplyf.finished.connect(wxfinished_owm_forecast)
-
-    if not hasMetar and not owmonecall:
-        wxurl = 'https://api.openweathermap.org/data/2.5/weather?appid=' + \
-                ApiKeys.owmapi
-        wxurl += "&lat=" + str(Config.location.lat) + \
-                 '&lon=' + str(Config.location.lng)
-        wxurl += '&units=imperial&lang=' + Config.Language.lower()
-        wxurl += '&r=' + str(random.random())
-        print('INFO: getting OpenWeather current conditions: ' + wxurl)
-        r = QUrl(wxurl)
-        r = QNetworkRequest(r)
-        wxreplyc = manager.get(r)
-        wxreplyc.finished.connect(wxfinished_owm_current)
-
 
 def getwx_tm():
     global wxreply
     global wxreply2
     global wxreply3
     global hasMetar
+
+    max_age = Config.weather_refresh * 60
 
     if not hasMetar:
         # current conditions
@@ -1636,11 +1193,16 @@ def getwx_tm():
         wxurl += '&units=imperial'
         wxurl += '&fields=temperature,weatherCode,temperatureApparent,humidity,'
         wxurl += 'windSpeed,windDirection,windGust,pressureSeaLevel,precipitationType'
-        print('INFO: getting Tomorrow.io current conditions: ' + wxurl)
-        r = QUrl(wxurl)
-        r = QNetworkRequest(r)
-        wxreply = manager.get(r)
-        wxreply.finished.connect(wxfinished_tm_current)
+        cached = api_cache_read(wxurl, max_age)
+        if cached is not None:
+            print('INFO: using cached Tomorrow.io current conditions')
+            wxfinished_tm_current(cached)
+        else:
+            print('INFO: getting Tomorrow.io current conditions: ' + wxurl)
+            r = QUrl(wxurl)
+            r = QNetworkRequest(r)
+            wxreply = manager.get(r)
+            wxreply.finished.connect(wxfinished_tm_current)
 
     # hourly forecast
     wxurl2 = 'https://api.tomorrow.io/v4/timelines?timesteps=1h&apikey=' + ApiKeys.tmapi
@@ -1649,11 +1211,16 @@ def getwx_tm():
     wxurl2 += '&fields=temperature,precipitationIntensity,precipitationType,'
     wxurl2 += 'precipitationProbability,weatherCode,'
     wxurl2 += 'snowAccumulationAvg,rainAccumulationAvg'
-    print('INFO: getting Tomorrow.io hourly forecast: ' + wxurl2)
-    r2 = QUrl(wxurl2)
-    r2 = QNetworkRequest(r2)
-    wxreply2 = manager.get(r2)
-    wxreply2.finished.connect(wxfinished_tm_hourly)
+    cached2 = api_cache_read(wxurl2, max_age)
+    if cached2 is not None:
+        print('INFO: using cached Tomorrow.io hourly forecast')
+        wxfinished_tm_hourly(cached2)
+    else:
+        print('INFO: getting Tomorrow.io hourly forecast: ' + wxurl2)
+        r2 = QUrl(wxurl2)
+        r2 = QNetworkRequest(r2)
+        wxreply2 = manager.get(r2)
+        wxreply2.finished.connect(wxfinished_tm_hourly)
 
     # daily forecast
     wxurl3 = 'https://api.tomorrow.io/v4/timelines?timesteps=1d&apikey=' + ApiKeys.tmapi
@@ -1662,25 +1229,89 @@ def getwx_tm():
     wxurl3 += '&fields=temperature,precipitationIntensity,precipitationType,'
     wxurl3 += 'precipitationProbability,weatherCode,temperatureMax,temperatureMin,'
     wxurl3 += 'snowAccumulationAvg,rainAccumulationAvg'
-    print('INFO: getting Tomorrow.io daily forecast: ' + wxurl3)
-    r3 = QUrl(wxurl3)
-    r3 = QNetworkRequest(r3)
-    wxreply3 = manager.get(r3)
-    wxreply3.finished.connect(wxfinished_tm_daily)
+    cached3 = api_cache_read(wxurl3, max_age)
+    if cached3 is not None:
+        print('INFO: using cached Tomorrow.io daily forecast')
+        wxfinished_tm_daily(cached3)
+    else:
+        print('INFO: getting Tomorrow.io daily forecast: ' + wxurl3)
+        r3 = QUrl(wxurl3)
+        r3 = QNetworkRequest(r3)
+        wxreply3 = manager.get(r3)
+        wxreply3.finished.connect(wxfinished_tm_daily)
 
 
 def getwx_metar():
     global metarreply
     metarurl = 'https://tgftp.nws.noaa.gov/data/observations/metar/stations/' + Config.METAR + '.TXT'
-    print('INFO: getting METAR current conditions: ' + metarurl)
-    r = QUrl(metarurl)
-    r = QNetworkRequest(r)
-    metarreply = manager.get(r)
-    metarreply.finished.connect(wxfinished_metar)
+    cached = api_cache_read(metarurl, Config.weather_refresh * 60)
+    if cached is not None:
+        print('INFO: using cached METAR current conditions')
+        wxfinished_metar(cached)
+    else:
+        print('INFO: getting METAR current conditions: ' + metarurl)
+        r = QUrl(metarurl)
+        r = QNetworkRequest(r)
+        metarreply = manager.get(r)
+        metarreply.finished.connect(wxfinished_metar)
+
+
+def get_noaa_alerts():
+    """Check api.weather.gov for active severe weather alerts for Config.location.
+    Deliberately not disk-cached (unlike the other weather/radar calls): alerts
+    are safety-relevant, so every check should reflect the current live state."""
+    global manager, noaaAlertReply
+    if not Config.noaa_alerts_enabled:
+        return
+    alerturl = 'https://api.weather.gov/alerts/active?point=' + \
+               str(Config.location.lat) + ',' + str(Config.location.lng) + \
+               '&severity=' + ','.join(Config.alert_severities)
+    print('INFO: checking NOAA severe weather alerts: ' + alerturl)
+    req = QNetworkRequest(QUrl(alerturl))
+    req.setRawHeader(b'User-Agent', b'PiClock/1.0 (https://github.com/tecms25/PiClock)')
+    req.setRawHeader(b'Accept', b'application/geo+json')
+    noaaAlertReply = manager.get(req)
+    noaaAlertReply.finished.connect(noaa_alerts_finished)
+
+
+def noaa_alerts_finished():
+    global noaaAlertReply, alertBubble
+
+    noaaAlertReply.deleteLater()
+    if noaaAlertReply.error() != QNetworkReply.NetworkError.NoError:
+        print('ERROR: Response from api.weather.gov: ' + noaaAlertReply.errorString())
+        return
+
+    alertstr = str(bytes(noaaAlertReply.readAll()), 'utf-8')
+    try:
+        alertdata = json.loads(alertstr)
+    except ValueError:  # includes json.decoder.JSONDecodeError
+        print('WARNING:', traceback.format_exc())
+        print('WARNING: Response from api.weather.gov: ' + alertstr)
+        return
+
+    alerts = []
+    for feature in alertdata.get('features', []):
+        props = feature.get('properties', {})
+        expires = None
+        if props.get('expires'):
+            try:
+                expires = dateutil.parser.parse(props['expires']).astimezone(tzlocal.get_localzone())
+            except (ValueError, OverflowError):
+                expires = None
+        alerts.append({
+            'event': props.get('event', 'Alert'),
+            'headline': props.get('headline', ''),
+            'expires': expires,
+        })
+
+    if alerts:
+        print(f'INFO: {len(alerts)} active NOAA alert(s): ' + ', '.join(a['event'] for a in alerts))
+    alertBubble.set_alerts(alerts)
 
 
 def qtstart():
-    global ctimer, wxtimer, temptimer, metadatatimer
+    global ctimer, wxtimer, temptimer, metadatatimer, cursortimer, alerttimer
     global objradar1
     global objradar2
     global objradar3
@@ -1733,6 +1364,10 @@ def qtstart():
     ctimer.timeout.connect(tick)
     ctimer.start(1000)
 
+    cursortimer = QtCore.QTimer()
+    cursortimer.timeout.connect(cursor_idle_tick)
+    cursortimer.start(CURSOR_POLL_MS)
+
     wxtimer = QtCore.QTimer()
     wxtimer.timeout.connect(getallwx)
     wxtimer.start(int(1000 * Config.weather_refresh * 60 + random.uniform(1000, 10000)))
@@ -1750,9 +1385,100 @@ def qtstart():
     # Fetch metadata immediately on startup
     get_rainviewer_metadata()
 
+    # Check for active NOAA/NWS severe weather alerts, then on a timer
+    alerttimer = QtCore.QTimer()
+    alerttimer.timeout.connect(get_noaa_alerts)
+    alerttimer.start(int(1000 * 60 * Config.alert_refresh + random.uniform(1000, 5000)))
+    get_noaa_alerts()
 
     if Config.useslideshow:
         objimage1.start(Config.slide_time)
+
+
+# web_slideshow_playlist = 0: random images from this folder (repo-root-relative,
+# resolved from this file's own location so it works regardless of cwd).
+SLIDESHOW_LOCAL_DIR = os.path.normpath(
+    os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'Pictures', 'Slideshow'))
+# web_slideshow_playlist = 1: downloaded images from Config.slideshow_url are cached here.
+SLIDESHOW_CACHE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'slideshow_cache')
+SLIDESHOW_PLAYLIST_REFRESH_SEC = 2 * 60 * 60  # re-check the web playlist for changes every 2 hours
+SLIDESHOW_IMAGE_EXTENSIONS = ('.jpg', '.jpeg', '.png', '.gif', '.bmp', '.webp')
+
+
+ALERT_CYCLE_MS = 6000  # how long each alert shows before cycling to the next, when more than one is active
+
+
+class AlertBubble(QtWidgets.QLabel):
+    """Red, semi-transparent warning bubble for active NOAA/NWS severe weather
+    alerts (see get_noaa_alerts()). Hidden when there are none; fades in/out
+    as alerts appear or clear, and cycles through multiple active alerts."""
+
+    def __init__(self, parent, rect):
+        QtWidgets.QLabel.__init__(self, parent)
+        self.setObjectName('alertBubble')
+        self.setGeometry(rect)
+        self.setWordWrap(True)
+        self.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.setStyleSheet(
+            '#alertBubble { background-color: rgba(190, 20, 20, 195); '
+            'border-radius: ' + str(int(rect.height() / 2.4)) + 'px; '
+            'color: #FFFFFF; font-family:"Open Sans"; font-weight: bold; '
+            'font-size: ' + str(int(22 * xscale * Config.fontmult)) + 'px; ' +
+            Config.fontattr + '}')
+
+        self._opacity_effect = QtWidgets.QGraphicsOpacityEffect(self)
+        self._opacity_effect.setOpacity(0.0)
+        self.setGraphicsEffect(self._opacity_effect)
+        self.hide()
+
+        self.alerts = []
+        self.index = 0
+        self._anim = None
+        self._shown = False
+
+        self.cycle_timer = QtCore.QTimer()
+        self.cycle_timer.timeout.connect(self._cycle)
+        self.cycle_timer.start(ALERT_CYCLE_MS)
+
+    def set_alerts(self, alerts):
+        self.alerts = alerts
+        self.index = 0
+        if alerts:
+            self._show_current()
+            if not self._shown:
+                self._shown = True
+                self._fade(1.0)
+        else:
+            if self._shown:
+                self._shown = False
+                self._fade(0.0)
+
+    def _cycle(self):
+        if len(self.alerts) > 1:
+            self.index = (self.index + 1) % len(self.alerts)
+            self._show_current()
+
+    def _show_current(self):
+        alert = self.alerts[self.index]
+        text = alert['event'].upper()
+        if alert.get('expires'):
+            text += '\nuntil {0:%-I:%M %p}'.format(alert['expires'])
+        self.setText(text)
+
+    def _fade(self, target):
+        if self._anim is not None:
+            self._anim.stop()
+            self._anim.deleteLater()
+        if target > 0:
+            self.show()
+        anim = QtCore.QPropertyAnimation(self._opacity_effect, b'opacity', self)
+        anim.setDuration(500)
+        anim.setStartValue(self._opacity_effect.opacity())
+        anim.setEndValue(target)
+        if target == 0:
+            anim.finished.connect(self.hide)
+        self._anim = anim
+        anim.start()
 
 
 class SlideShow(QtWidgets.QLabel):
@@ -1763,24 +1489,49 @@ class SlideShow(QtWidgets.QLabel):
 
         self.pause = False
         self.count = 0
-        self.img_list = []
+        self.img_list = []  # local file paths, in display order
         self.img_inc = 1
+        self.list_reply = None
+        self.image_reply = None
+        self.pending_downloads = []
 
-        self.get_images()
+        os.makedirs(SLIDESHOW_LOCAL_DIR, exist_ok=True)
+        os.makedirs(SLIDESHOW_CACHE_DIR, exist_ok=True)
+        self._clear_cache_dir()  # start every launch from a clean slate; nothing to redownload lingers forever
 
         self.setObjectName('slideShow')
         self.setGeometry(rect)
         self.setStyleSheet('#slideShow { background-color: ' +
                            Config.slide_bg_color + '; }')
-        self.setAlignment(Qt.AlignHCenter | Qt.AlignCenter)
+        self.setAlignment(Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignCenter)
 
         self.timer = None
+        self.playlist_timer = None
+
+        # Overlay label used to crossfade into the next image instead of a hard cut.
+        self._fade_label = QtWidgets.QLabel(self)
+        self._fade_label.setGeometry(0, 0, self.width(), self.height())
+        self._fade_label.setAlignment(Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignCenter)
+        self._fade_label.setStyleSheet('background-color: transparent;')
+        self._fade_opacity_effect = QtWidgets.QGraphicsOpacityEffect(self._fade_label)
+        self._fade_opacity_effect.setOpacity(0.0)
+        self._fade_label.setGraphicsEffect(self._fade_opacity_effect)
+        self._fade_label.hide()
+        self._fade_anim = None
 
     def start(self, interval):
         self.timer = QtCore.QTimer()
-        self.timer.timeout.connect(self.run_ss)
+        self.timer.timeout.connect(self.switch_image)
         self.timer.start(int(1000 * interval + random.uniform(1, 10)))
-        self.run_ss()
+
+        if Config.web_slideshow_playlist:
+            self.refresh_playlist()  # downloads fresh on launch
+            self.playlist_timer = QtCore.QTimer()
+            self.playlist_timer.timeout.connect(self.refresh_playlist)
+            self.playlist_timer.start(int(1000 * SLIDESHOW_PLAYLIST_REFRESH_SEC))
+        else:
+            self.scan_local_images()
+            self.switch_image()
 
     def stop(self):
         try:
@@ -1789,46 +1540,161 @@ class SlideShow(QtWidgets.QLabel):
         except AttributeError:
             print('WARNING:', traceback.format_exc())
             pass
-
-    def run_ss(self):
-        self.get_images()
-        self.switch_image()
+        if self.playlist_timer:
+            self.playlist_timer.stop()
+            self.playlist_timer = None
 
     def switch_image(self):
+        if self.img_list and not self.pause:
+            self.count = (self.count + self.img_inc) % len(self.img_list)
+            self.display_image(self.img_list[self.count])
+
+    def display_image(self, path):
+        image = QtGui.QImage(path)
+        if image.isNull():
+            print(f"ERROR: Unable to load slideshow image: {path}")
+            return
+        pixmap = QtGui.QPixmap.fromImage(image).scaled(
+            self.size(),
+            Qt.AspectRatioMode.KeepAspectRatio,
+            Qt.TransformationMode.SmoothTransformation)
+
+        if Config.slide_transition_ms <= 0:
+            self.setPixmap(pixmap)
+            return
+
+        if self._fade_anim is not None:
+            self._fade_anim.stop()
+            self._finish_transition(self._fade_label.pixmap())
+
+        self._fade_label.setGeometry(0, 0, self.width(), self.height())
+        self._fade_label.setPixmap(pixmap)
+        self._fade_opacity_effect.setOpacity(0.0)
+        self._fade_label.show()
+        self._fade_label.raise_()
+
+        anim = QtCore.QPropertyAnimation(self._fade_opacity_effect, b'opacity', self)
+        anim.setDuration(int(Config.slide_transition_ms))
+        anim.setStartValue(0.0)
+        anim.setEndValue(1.0)
+        anim.finished.connect(lambda: self._finish_transition(pixmap))
+        self._fade_anim = anim
+        anim.start()
+
+    def _finish_transition(self, pixmap):
+        self.setPixmap(pixmap)
+        self._fade_label.hide()
+        self._fade_anim = None
+
+    @staticmethod
+    def _clear_cache_dir():
+        """Wipe SLIDESHOW_CACHE_DIR on launch so the cache can never build up
+        across restarts; refresh_playlist() re-downloads whatever the current
+        playlist needs."""
+        for existing in os.listdir(SLIDESHOW_CACHE_DIR):
+            try:
+                os.remove(os.path.join(SLIDESHOW_CACHE_DIR, existing))
+            except OSError as e:
+                print(f"ERROR: Unable to remove cached slideshow image {existing}: {e}")
+
+    def scan_local_images(self):
+        """Populate img_list from SLIDESHOW_LOCAL_DIR (web_slideshow_playlist = 0)."""
+        try:
+            files = [
+                os.path.join(SLIDESHOW_LOCAL_DIR, f)
+                for f in os.listdir(SLIDESHOW_LOCAL_DIR)
+                if os.path.splitext(f)[1].lower() in SLIDESHOW_IMAGE_EXTENSIONS
+            ]
+        except OSError as e:
+            print(f"ERROR: Unable to read {SLIDESHOW_LOCAL_DIR}: {e}")
+            files = []
+        if not files:
+            print(f"WARNING: No slideshow images found in {SLIDESHOW_LOCAL_DIR}")
+        random.shuffle(files)
+        self.img_list = files
+        self.count = 0
+
+    @staticmethod
+    def cache_filename_for_url(url):
+        """Stable, filesystem-safe cache filename derived from the URL, so the
+        same URL always maps to the same cached file and re-downloads can be
+        skipped when the playlist is unchanged."""
+        ext = os.path.splitext(urlparse(url).path)[1].lower()
+        if not ext or len(ext) > 5:
+            ext = '.img'
+        return hashlib.sha1(url.encode('utf-8')).hexdigest() + ext
+
+    def refresh_playlist(self):
+        """Fetch the playlist text file (web_slideshow_playlist = 1)."""
+        global manager
+        self.list_reply = manager.get(QNetworkRequest(QUrl(Config.slideshow_url)))
+        self.list_reply.finished.connect(self.playlist_finished)
+
+    def playlist_finished(self):
+        reply = self.list_reply
+        reply.deleteLater()
+        if reply.error() != QNetworkReply.NetworkError.NoError:
+            print(f"ERROR: Unable to fetch slideshow playlist: {reply.errorString()}")
+            return
+
+        content = str(reply.readAll(), 'utf-8')
+        urls = [line.strip() for line in content.splitlines() if line.strip()]
+        wanted = {self.cache_filename_for_url(url): url for url in urls}
+
+        # Drop cached images that are no longer in the playlist.
+        try:
+            for existing in os.listdir(SLIDESHOW_CACHE_DIR):
+                if existing not in wanted:
+                    try:
+                        os.remove(os.path.join(SLIDESHOW_CACHE_DIR, existing))
+                    except OSError:
+                        pass
+        except OSError as e:
+            print(f"ERROR: Unable to read {SLIDESHOW_CACHE_DIR}: {e}")
+
+        def cache_path(fname):
+            return os.path.join(SLIDESHOW_CACHE_DIR, fname)
+
+        self.pending_downloads = [
+            (url, cache_path(fname)) for fname, url in wanted.items()
+            if not os.path.exists(cache_path(fname))
+        ]
+
+        cached = [cache_path(fname) for fname in wanted if os.path.exists(cache_path(fname))]
+        random.shuffle(cached)
+        self.img_list = cached
+        self.count = 0
         if self.img_list:
-            if not self.pause:
-                self.count = (self.count + 1) % len(self.img_list)  # Move to the next image
-                self.show_image(self.img_list[self.count])
+            self.switch_image()
 
-    def show_image(self, image_url):
-        try:
-            # Download the image from the URL
-            print(f"SLIDESHOW: Attempting to load image: {image_url}")  # Log the URL
-            image_data = requests.get(image_url).content
-            image = QtGui.QImage()
-            image.loadFromData(image_data)
+        if self.pending_downloads:
+            print(f"SLIDESHOW: downloading {len(self.pending_downloads)} new image(s)")
+            self._download_next_pending()
+        else:
+            print("SLIDESHOW: playlist unchanged, no new images to download")
 
-            bg = QtGui.QPixmap.fromImage(image)
-            self.setPixmap(bg.scaled(
-                self.size(),
-                QtCore.Qt.KeepAspectRatio,
-                QtCore.Qt.SmoothTransformation))
-        except Exception as e:
-            print(f"ERROR: Unable to load image from {image_url}: {e}")
+    def _download_next_pending(self):
+        global manager
+        if not self.pending_downloads:
+            return
+        url, dest = self.pending_downloads[0]
+        print(f"SLIDESHOW: downloading {url}")
+        self.image_reply = manager.get(QNetworkRequest(QUrl(url)))
+        self.image_reply.finished.connect(lambda: self._pending_download_finished(dest))
 
-    def get_images(self):
-        try:
-            # Fetch the list of image URLs from the web
-            response = requests.get(Config.slideshow_url)
-            response.raise_for_status()  # Raise an error if the request fails
-            content = response.text
-
-            # Parse the URLs (assuming one URL per line)
-            self.img_list = [line.strip() for line in content.splitlines() if line.strip()]
-            random.shuffle(self.img_list)  # Shuffle the image list for random order
-        except Exception as e:
-            print(f"ERROR: Unable to fetch image list: {e}")
-            self.img_list = []  # Reset the list if fetching fails
+    def _pending_download_finished(self, dest):
+        reply = self.image_reply
+        reply.deleteLater()
+        self.pending_downloads.pop(0)
+        if reply.error() != QNetworkReply.NetworkError.NoError:
+            print(f"ERROR: Unable to download {reply.url().toString()}: {reply.errorString()}")
+        else:
+            with open(dest, 'wb') as f:
+                f.write(bytes(reply.readAll()))
+            self.img_list.append(dest)
+            if len(self.img_list) == 1:
+                self.switch_image()
+        self._download_next_pending()
 
     def play_pause(self):
         if not self.pause:
@@ -1860,22 +1726,30 @@ def get_rainviewer_metadata():
         return
 
     metadataurl = 'https://api.rainviewer.com/public/weather-maps.json'
-    print('INFO: Fetching RainViewer metadata: ' + metadataurl)
-    metadatareq = QNetworkRequest(QUrl(metadataurl))
-    radarMetadataReply = manager.get(metadatareq)
-    radarMetadataReply.finished.connect(rainviewer_metadata_finished)
+    cached = api_cache_read(metadataurl, radarMetadataCache['updateinterval'])
+    if cached is not None:
+        print('INFO: using cached RainViewer metadata')
+        rainviewer_metadata_finished(cached)
+    else:
+        print('INFO: Fetching RainViewer metadata: ' + metadataurl)
+        metadatareq = QNetworkRequest(QUrl(metadataurl))
+        radarMetadataReply = manager.get(metadatareq)
+        radarMetadataReply.finished.connect(rainviewer_metadata_finished)
 
 
-def rainviewer_metadata_finished():
+def rainviewer_metadata_finished(data=None):
     """Process the RainViewer metadata response"""
     global radarMetadataCache, radarMetadataReply
 
-    if radarMetadataReply.error() != QNetworkReply.NoError:
-        metadatastr = str(radarMetadataReply.readAll(), 'utf-8')
-        print('ERROR: Response from api.rainviewer.com: ' + metadatastr)
-        return
+    if data is None:
+        radarMetadataReply.deleteLater()
+        data = bytes(radarMetadataReply.readAll())
+        if radarMetadataReply.error() != QNetworkReply.NetworkError.NoError:
+            print('ERROR: Response from api.rainviewer.com: ' + str(data, 'utf-8'))
+            return
+        api_cache_write(radarMetadataReply.url().toString(), data)
 
-    metadatastr = str(radarMetadataReply.readAll(), 'utf-8')
+    metadatastr = str(data, 'utf-8')
     try:
         radarMetadataCache['data'] = json.loads(metadatastr)
         radarMetadataCache['lastupdated'] = time.time()
@@ -1887,6 +1761,13 @@ def rainviewer_metadata_finished():
 
 
 class Radar(QtWidgets.QLabel):
+
+    # Frame timing shared by every Radar instance, so playback is driven by
+    # wall-clock time (see rtick()) instead of a per-instance counter. That
+    # keeps all radars in lockstep, both on startup and while running, no
+    # matter when each one's timer happened to start.
+    TICK_MS = 200
+    HOLD_TICKS = 5  # ticks spent holding on the newest frame before sweeping through history
 
     def __init__(self, parent, radar, rect, myname):
         self.myname = myname
@@ -1931,7 +1812,7 @@ class Radar(QtWidgets.QLabel):
         self.setObjectName('radar')
         self.setGeometry(rect)
         self.setStyleSheet('#radar { background-color: grey; }')
-        self.setAlignment(Qt.AlignCenter)
+        self.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
         # weather radar layer
         self.wwx = QtWidgets.QLabel(self)
@@ -1985,8 +1866,6 @@ class Radar(QtWidgets.QLabel):
             self.tilesWidth += 1
         self.frameImages = []
         self.frameIndex = 0
-        self.displayedFrame = 0
-        self.ticker = 0
         self.lastget = 0
 
         self.getTime = 0
@@ -1999,26 +1878,31 @@ class Radar(QtWidgets.QLabel):
         self.overlayreply = None
 
     def rtick(self):
-        """Update radar display at regular intervals"""
-        if time.time() > (self.lastget + self.interval):
-            self.get(int(time.time()))
-            self.lastget = time.time()
+        """Update radar display, synced to wall-clock time so every Radar
+        instance shows the same point in the loop at the same moment."""
+        now = time.time()
+        if now > (self.lastget + self.interval):
+            self.get(int(now))
+            self.lastget = now
         if len(self.frameImages) < 1:
             return
-        if self.displayedFrame == 0:
-            self.ticker += 1
-            if self.ticker < 5:
-                return
-        self.ticker = 0
-        try:
-            f = self.frameImages[self.displayedFrame]
-            self.wwx.setPixmap(f['image'])
-            self.timestamp.setPixmap(f['timestamp'])
-        except IndexError:
-            pass
-        self.displayedFrame += 1
-        if self.displayedFrame >= len(self.frameImages):
-            self.displayedFrame = 0
+
+        cycle_ticks = self.HOLD_TICKS + self.anim
+        tick_in_cycle = int(now * 1000 / self.TICK_MS) % cycle_ticks
+        if tick_in_cycle < self.HOLD_TICKS - 1:
+            frame_index = self.anim  # holding on the newest frame
+        else:
+            frame_index = tick_in_cycle - (self.HOLD_TICKS - 1)
+
+        t_now = int(now / 600) * 600
+        target_time = t_now - (self.anim - frame_index) * 600
+
+        for f in self.frameImages:
+            if f['time'] == target_time:
+                self.wwx.setPixmap(f['image'])
+                self.timestamp.setPixmap(f['timestamp'])
+                break
+        # if the target frame hasn't been fetched yet, keep showing the last one
 
     def get(self, t=0):
         """Retrieve radar tiles for a specific time or the current base time."""
@@ -2078,11 +1962,16 @@ class Radar(QtWidgets.QLabel):
                 tileurl = host + radarpath + '/' + tt
                 self.tileurls.append(tileurl)
 
-
-        print(f'INFO: {self.myname} {t} tile{self.getIndex} {self.tileurls[i]}')
-        tilereq = QNetworkRequest(QUrl(self.tileurls[i]))
-        self.tilereply = manager.get(tilereq)
-        self.tilereply.finished.connect(self.get_tilesreply)
+        tileurl = self.tileurls[i]
+        cached = api_cache_read(tileurl, Config.radar_refresh * 60)
+        if cached is not None:
+            print(f'INFO: {self.myname} {t} tile{self.getIndex} using cached {tileurl}')
+            self.get_tilesreply(cached)
+        else:
+            print(f'INFO: {self.myname} {t} tile{self.getIndex} {tileurl}')
+            tilereq = QNetworkRequest(QUrl(tileurl))
+            self.tilereply = manager.get(tilereq)
+            self.tilereply.finished.connect(self.get_tilesreply)
         return True  # Successfully queued for fetching
 
     def find_radar_path_for_time(self, timestamp):
@@ -2124,16 +2013,18 @@ class Radar(QtWidgets.QLabel):
 
         return None
 
-    def get_tilesreply(self):
+    def get_tilesreply(self, data=None):
         """Process the radar tile response"""
-        if self.tilereply.error() != QNetworkReply.NoError:
-            tilestr = str(self.tilereply.readAll(), 'utf-8')
-#            print('ERROR: Response from rainviewer.com: ' + tilestr)
-            print(f'ERROR: Response from rainviewer.com: {tilestr}')
-            return
+        if data is None:
+            self.tilereply.deleteLater()
+            data = bytes(self.tilereply.readAll())
+            if self.tilereply.error() != QNetworkReply.NetworkError.NoError:
+                print(f'ERROR: Response from rainviewer.com: {str(data, "utf-8")}')
+                return
+            api_cache_write(self.tilereply.url().toString(), data)
         self.tileQimages.append(QImage())
         try:
-            self.tileQimages[self.getIndex].loadFromData(self.tilereply.readAll())
+            self.tileQimages[self.getIndex].loadFromData(data)
             self.getIndex += 1
         except IndexError:
             print('WARNING:', traceback.format_exc())
@@ -2147,8 +2038,8 @@ class Radar(QtWidgets.QLabel):
     def combine_tiles(self):
         # create weather radar image
         """Combine the radar tiles into a single image"""
-        ii = QImage(self.tilesWidth * 256, self.tilesHeight * 256, QImage.Format_ARGB32)
-        ii.fill(Qt.transparent)
+        ii = QImage(self.tilesWidth * 256, self.tilesHeight * 256, QImage.Format.Format_ARGB32)
+        ii.fill(Qt.GlobalColor.transparent)
         painter = QPainter()
         painter.begin(ii)
         i = 0
@@ -2159,7 +2050,7 @@ class Radar(QtWidgets.QLabel):
         for y in range(0, self.totalHeight, 256):
             for x in range(0, self.totalWidth, 256):
                 try:
-                    if self.tileQimages[i].format() == QImage.Format_ARGB32:
+                    if self.tileQimages[i].format() == QImage.Format.Format_ARGB32:
                         painter.drawImage(x, y, self.tileQimages[i])
                     i += 1
                 except IndexError:
@@ -2172,13 +2063,13 @@ class Radar(QtWidgets.QLabel):
 
         # create timestamp layer
         ii3 = ii.copy(-xo, -yo, self.rect.width(), self.rect.height())
-        ii3.fill(Qt.transparent)
+        ii3.fill(Qt.GlobalColor.transparent)
         painter2 = QPainter()
         painter2.begin(ii3)
         timestamp = 'Radar Time: {0:%-I:%M %p}'.format(datetime.datetime.fromtimestamp(self.getTime))
         painter2.setPen(QColor(63, 63, 63, 255))
         painter2.setFont(QFont("Arial", pointSize=8, weight=75))
-        painter2.setRenderHint(QPainter.TextAntialiasing)
+        painter2.setRenderHint(QPainter.RenderHint.TextAntialiasing)
         painter2.drawText(3 - 1, 12 - 1, timestamp)
         painter2.drawText(3 + 2, 12 + 1, timestamp)
         painter2.setPen(QColor(255, 255, 255, 255))
@@ -2260,28 +2151,32 @@ class Radar(QtWidgets.QLabel):
         return 'http://maps.googleapis.com/maps/api/staticmap?' + \
             '&'.join(urlp)
 
-    def basefinished(self):
-        if self.basereply.error() != QNetworkReply.NoError:
-            basestr = str(self.basereply.readAll(), 'utf-8')
-            if usemapbox:
-                try:
-                    basejson = json.loads(basestr)
-                    print('ERROR: Response from api.mapbox.com: ' + basejson['message'])
-                except ValueError:  # includes json.decoder.JSONDecodeError
-                    print('ERROR: Response from api.mapbox.com: ' + basestr)
-                    pass
-            else:
-                print('ERROR: Response from maps.googleapis.com: ' + basestr)
-            return
+    def basefinished(self, data=None):
+        if data is None:
+            self.basereply.deleteLater()
+            data = bytes(self.basereply.readAll())
+            if self.basereply.error() != QNetworkReply.NetworkError.NoError:
+                basestr = str(data, 'utf-8')
+                if usemapbox:
+                    try:
+                        basejson = json.loads(basestr)
+                        print('ERROR: Response from api.mapbox.com: ' + basejson['message'])
+                    except ValueError:  # includes json.decoder.JSONDecodeError
+                        print('ERROR: Response from api.mapbox.com: ' + basestr)
+                        pass
+                else:
+                    print('ERROR: Response from maps.googleapis.com: ' + basestr)
+                return
+            api_cache_write(self.basereply.url().toString(), data)
         basepixmap = QPixmap()
-        basepixmap.loadFromData(self.basereply.readAll())
+        basepixmap.loadFromData(data)
         if basepixmap.size() != self.rect.size():
-            basepixmap = basepixmap.scaled(self.rect.size(), Qt.KeepAspectRatio, Qt.SmoothTransformation)
+            basepixmap = basepixmap.scaled(self.rect.size(), Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation)
         self.setPixmap(basepixmap)
 
         # make marker pixmap
         mkpixmap = QPixmap(basepixmap.size())
-        mkpixmap.fill(Qt.transparent)
+        mkpixmap.fill(Qt.GlobalColor.transparent)
         br = QBrush(QColor(Config.dimcolor))
         painter = QPainter()
         painter.begin(mkpixmap)
@@ -2300,8 +2195,8 @@ class Radar(QtWidgets.QLabel):
                 if os.path.splitext(mkfile)[1] == '':
                     mkfile += '.png'
                 mk2.load(mkfile)
-                if mk2.format != QImage.Format_ARGB32:
-                    mk2 = mk2.convertToFormat(QImage.Format_ARGB32)
+                if mk2.format() != QImage.Format.Format_ARGB32:
+                    mk2 = mk2.convertToFormat(QImage.Format.Format_ARGB32)
                 mkh = 80  # self.rect.height() / 5
                 if 'size' in marker:
                     if marker['size'] == 'small':
@@ -2320,43 +2215,57 @@ class Radar(QtWidgets.QLabel):
                             g = g * cg
                             b = b * cb
                             mk2.setPixel(x, y, QColor.fromRgbF(r, g, b, a).rgba())
-                mk2 = mk2.scaledToHeight(mkh, 1)
+                mk2 = mk2.scaledToHeight(mkh, Qt.TransformationMode.SmoothTransformation)
                 painter.drawImage(int(pt.x - mkh / 2), int(pt.y - mkh / 2), mk2)
 
         painter.end()
 
         self.wmk.setPixmap(mkpixmap)
 
-    def overlayfinished(self):
-        if self.overlayreply.error() != QNetworkReply.NoError:
-            overlaystr = str(self.overlayreply.readAll(), 'utf-8')
-            try:
-                overlayjson = json.loads(overlaystr)
-                print('ERROR: Response from api.mapbox.com: ' + overlayjson['message'])
-            except ValueError:  # includes json.decoder.JSONDecodeError
-                print('ERROR: Response from api.mapbox.com: ' + overlaystr)
-                pass
-            return
+    def overlayfinished(self, data=None):
+        if data is None:
+            self.overlayreply.deleteLater()
+            data = bytes(self.overlayreply.readAll())
+            if self.overlayreply.error() != QNetworkReply.NetworkError.NoError:
+                overlaystr = str(data, 'utf-8')
+                try:
+                    overlayjson = json.loads(overlaystr)
+                    print('ERROR: Response from api.mapbox.com: ' + overlayjson['message'])
+                except ValueError:  # includes json.decoder.JSONDecodeError
+                    print('ERROR: Response from api.mapbox.com: ' + overlaystr)
+                    pass
+                return
+            api_cache_write(self.overlayreply.url().toString(), data)
         overlaypixmap = QPixmap()
-        overlaypixmap.loadFromData(self.overlayreply.readAll())
+        overlaypixmap.loadFromData(data)
         if overlaypixmap.size() != self.rect.size():
             overlaypixmap = overlaypixmap.scaled(
                 self.rect.size(),
-                Qt.KeepAspectRatio,
-                Qt.SmoothTransformation)
+                Qt.AspectRatioMode.KeepAspectRatio,
+                Qt.TransformationMode.SmoothTransformation)
         self.overlay.setPixmap(overlaypixmap)
 
     def getbase(self):
         global manager
-        basereq = QNetworkRequest(QUrl(self.baseurl))
-        self.basereply = manager.get(basereq)
-        self.basereply.finished.connect(self.basefinished)
+        cached = api_cache_read(self.baseurl, Config.radar_refresh * 60)
+        if cached is not None:
+            print(f'INFO: {self.myname} using cached base map')
+            self.basefinished(cached)
+        else:
+            basereq = QNetworkRequest(QUrl(self.baseurl))
+            self.basereply = manager.get(basereq)
+            self.basereply.finished.connect(self.basefinished)
 
     def getoverlay(self):
         global manager
-        overlayreq = QNetworkRequest(QUrl(self.overlayurl))
-        self.overlayreply = manager.get(overlayreq)
-        self.overlayreply.finished.connect(self.overlayfinished)
+        cached = api_cache_read(self.overlayurl, Config.radar_refresh * 60)
+        if cached is not None:
+            print(f'INFO: {self.myname} using cached overlay map')
+            self.overlayfinished(cached)
+        else:
+            overlayreq = QNetworkRequest(QUrl(self.overlayurl))
+            self.overlayreply = manager.get(overlayreq)
+            self.overlayreply.finished.connect(self.overlayfinished)
 
     def start(self, interval=0):
         """Start the radar display with an optional interval override"""
@@ -2396,7 +2305,7 @@ def realquit():
 
 def myquit(signum, frame):
     global objradar1, objradar2, objradar3, objradar4
-    global ctimer, wxtimer, temptimer
+    global ctimer, wxtimer, temptimer, cursortimer, alerttimer
 
     objradar1.stop()
     objradar2.stop()
@@ -2405,6 +2314,8 @@ def myquit(signum, frame):
     ctimer.stop()
     wxtimer.stop()
     temptimer.stop()
+    cursortimer.stop()
+    alerttimer.stop()
     if Config.useslideshow:
         objimage1.stop()
 
@@ -2441,9 +2352,9 @@ class MyMain(QtWidgets.QWidget):
         global weatherplayer, lastkeytime
         if isinstance(event, QtGui.QKeyEvent):
             # print('INFO:', event.key(), format(event.key(), '08x'))
-            if event.key() == Qt.Key_F4:
+            if event.key() == Qt.Key.Key_F4:
                 myquit(signal.SIGINT, None)
-            if event.key() == Qt.Key_F2:
+            if event.key() == Qt.Key.Key_F2:
                 if time.time() > lastkeytime:
                     if weatherplayer is None:
                         weatherplayer = Popen(
@@ -2452,19 +2363,19 @@ class MyMain(QtWidgets.QWidget):
                         weatherplayer.kill()
                         weatherplayer = None
                 lastkeytime = time.time() + 2
-            if event.key() == Qt.Key_Space:
+            if event.key() == Qt.Key.Key_Space:
                 nextframe(1)
-            if event.key() == Qt.Key_Left:
+            if event.key() == Qt.Key.Key_Left:
                 nextframe(-1)
-            if event.key() == Qt.Key_Right:
+            if event.key() == Qt.Key.Key_Right:
                 nextframe(1)
-            if event.key() == Qt.Key_F6:  # Previous Image
+            if event.key() == Qt.Key.Key_F6:  # Previous Image
                 objimage1.prev_next(-1)
-            if event.key() == Qt.Key_F7:  # Next Image
+            if event.key() == Qt.Key.Key_F7:  # Next Image
                 objimage1.prev_next(1)
-            if event.key() == Qt.Key_F8:  # Play/Pause
+            if event.key() == Qt.Key.Key_F8:  # Play/Pause
                 objimage1.play_pause()
-            if event.key() == Qt.Key_F9:  # Foreground Toggle
+            if event.key() == Qt.Key.Key_F9:  # Foreground Toggle
                 if foreGround.isVisible():
                     foreGround.hide()
                 else:
@@ -2530,19 +2441,40 @@ except AttributeError:
     Config.pressure_mbar = Config.metric
 
 try:
-    Config.digital
-except AttributeError:
-    Config.digital = 1
-
-try:
-    Config.Language
-except AttributeError:
-    Config.Language = 'EN'
-
-try:
     Config.fontmult
 except AttributeError:
     Config.fontmult = 1.0
+
+try:
+    Config.cursor_idle_seconds
+except AttributeError:
+    Config.cursor_idle_seconds = 3.0  # seconds of no mouse movement before the cursor is hidden; 0 disables
+
+try:
+    Config.web_slideshow_playlist
+except AttributeError:
+    Config.web_slideshow_playlist = 0  # 0 = local images from Pictures/Slideshow, 1 = Config.slideshow_url
+
+try:
+    Config.slide_transition_ms
+except AttributeError:
+    Config.slide_transition_ms = 1000  # crossfade duration between slideshow images; 0 for an instant hard cut
+
+try:
+    Config.noaa_alerts_enabled
+except AttributeError:
+    Config.noaa_alerts_enabled = 1  # 1 to show a warning bubble for active NOAA/NWS alerts, 0 to disable
+
+try:
+    Config.alert_refresh
+except AttributeError:
+    Config.alert_refresh = 10  # minutes between NOAA severe weather alert checks
+
+try:
+    Config.alert_severities
+except AttributeError:
+    Config.alert_severities = ('Severe', 'Extreme')  # NWS severity levels that trigger the warning bubble
+    # other possible values, from least to most severe: 'Unknown', 'Minor', 'Moderate', 'Severe', 'Extreme'
 
 try:
     Config.LPressure
@@ -2615,10 +2547,23 @@ lastkeytime = 0
 lastapiget = time.time()
 
 app = QtWidgets.QApplication(sys.argv)
-desktop = app.desktop()
-rec = desktop.screenGeometry()
+rec = app.primaryScreen().geometry()
 height = rec.height()
 width = rec.width()
+
+# MacBooks with a camera notch (14"/16" MacBook Pro 2021+, some MacBook Air
+# models) report a non-zero top safeAreaInsets for the built-in display; this
+# is 0 on displays without a notch (external monitors, older MacBooks).
+mac_appkit = None
+mac_notch_inset = 0
+if platform.system() == 'Darwin':
+    try:
+        import AppKit as mac_appkit
+        mac_notch_inset = int(mac_appkit.NSScreen.mainScreen().safeAreaInsets().top)
+    except ImportError:
+        print('WARNING: pyobjc-framework-Cocoa not installed; menu bar will not auto-hide '
+              'and top content will not avoid the MacBook notch. '
+              'Install with: pip install pyobjc-framework-Cocoa')
 
 signal.signal(signal.SIGINT, myquit)
 
@@ -2657,65 +2602,32 @@ foreGround.setObjectName('foreGround')
 foreGround.setStyleSheet('#foreGround { background-color: transparent; }')
 foreGround.setGeometry(0, 0, width, height)
 
-if not Config.digital:
-    clockface = QtWidgets.QFrame(foreGround)
-    clockface.setObjectName('clockface')
-    clockrect = QtCore.QRect(
-        int(width / 2 - height * .4),
-        int(height * .45 - height * .4),
-        int(height * .8),
-        int(height * .8))
-    clockface.setGeometry(clockrect)
-    clockface.setStyleSheet(
-        '#clockface { background-color: transparent; border-image: url(' +
-        Config.clockface +
-        ') 0 0 0 0 stretch stretch;}')
-
-    hourhand = QtWidgets.QLabel(foreGround)
-    hourhand.setObjectName('hourhand')
-    hourhand.setStyleSheet('#hourhand { background-color: transparent; }')
-
-    minhand = QtWidgets.QLabel(foreGround)
-    minhand.setObjectName('minhand')
-    minhand.setStyleSheet('#minhand { background-color: transparent; }')
-
-    sechand = QtWidgets.QLabel(foreGround)
-    sechand.setObjectName('sechand')
-    sechand.setStyleSheet('#sechand { background-color: transparent; }')
-
-    hourpixmap = QtGui.QPixmap(Config.hourhand)
-    hourpixmap2 = QtGui.QPixmap(Config.hourhand)
-    minpixmap = QtGui.QPixmap(Config.minhand)
-    minpixmap2 = QtGui.QPixmap(Config.minhand)
-    secpixmap = QtGui.QPixmap(Config.sechand)
-    secpixmap2 = QtGui.QPixmap(Config.sechand)
-else:
-    clockface = QtWidgets.QLabel(foreGround)
-    clockface.setObjectName('clockface')
-    clockrect = QtCore.QRect(
-        int(width / 2 - height * .4),
-        int(height * .45 - height * .4),
-        int(height * .8),
-        int(height * .8))
-    clockface.setGeometry(clockrect)
-    dcolor = QColor(Config.digitalcolor).darker(0).name()
-    lcolor = QColor(Config.digitalcolor).lighter(120).name()
-    clockface.setStyleSheet(
-        '#clockface { background-color: transparent; font-family:sans-serif;' +
-        ' font-weight: light; color: ' +
-        lcolor +
-        '; background-color: transparent; font-size: ' +
-        str(int(Config.digitalsize * xscale)) +
-        'px; ' +
-        Config.fontattr +
-        '}')
-    clockface.setAlignment(Qt.AlignCenter)
-    clockface.setGeometry(clockrect)
-    glow = QtWidgets.QGraphicsDropShadowEffect()
-    glow.setOffset(0)
-    glow.setBlurRadius(50)
-    glow.setColor(QColor(dcolor))
-    clockface.setGraphicsEffect(glow)
+clockface = QtWidgets.QLabel(foreGround)
+clockface.setObjectName('clockface')
+clockrect = QtCore.QRect(
+    int(width / 2 - height * .4),
+    int(height * .45 - height * .4),
+    int(height * .8),
+    int(height * .8))
+clockface.setGeometry(clockrect)
+dcolor = QColor(Config.digitalcolor).darker(0).name()
+lcolor = QColor(Config.digitalcolor).lighter(120).name()
+clockface.setStyleSheet(
+    '#clockface { background-color: transparent; font-family:"Open Sans";' +
+    ' font-weight: light; color: ' +
+    lcolor +
+    '; background-color: transparent; font-size: ' +
+    str(int(Config.digitalsize * xscale)) +
+    'px; ' +
+    Config.fontattr +
+    '}')
+clockface.setAlignment(Qt.AlignmentFlag.AlignCenter)
+clockface.setGeometry(clockrect)
+glow = QtWidgets.QGraphicsDropShadowEffect()
+glow.setOffset(0)
+glow.setBlurRadius(50)
+glow.setColor(QColor(dcolor))
+clockface.setGraphicsEffect(glow)
 
 # Create a drop shadow effect
 shadow = QtWidgets.QGraphicsDropShadowEffect(clockface)
@@ -2742,15 +2654,15 @@ objradar4 = Radar(frame2, Config.radar4, radar4rect, 'radar4')
 
 datex = QtWidgets.QLabel(foreGround)
 datex.setObjectName('datex')
-datex.setStyleSheet('#datex { font-family:sans-serif; color: ' +
+datex.setStyleSheet('#datex { font-family:"Open Sans"; color: ' +
                     Config.textcolor +
                     '; background-color: transparent; font-size: ' +
                     str(int(50 * xscale * Config.fontmult)) +
                     'px; ' +
                     Config.fontattr +
                     '}')
-datex.setAlignment(Qt.AlignHCenter | Qt.AlignTop)
-datex.setGeometry(0, 0, width, int(100 * yscale))
+datex.setAlignment(Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignTop)
+datex.setGeometry(0, mac_notch_inset, width, int(100 * yscale))
 
 # Create a drop shadow effect
 shadow = QtWidgets.QGraphicsDropShadowEffect(datex)
@@ -2764,13 +2676,13 @@ datex.setGraphicsEffect(shadow)
 
 datex2 = QtWidgets.QLabel(frame2)
 datex2.setObjectName('datex2')
-datex2.setStyleSheet('#datex2 { font-family:sans-serif; color: ' +
+datex2.setStyleSheet('#datex2 { font-family:"Open Sans"; color: ' +
                      Config.textcolor +
                      '; background-color: transparent; font-size: ' +
                      str(int(50 * xscale * Config.fontmult)) + 'px; ' +
                      Config.fontattr +
                      '}')
-datex2.setAlignment(Qt.AlignHCenter | Qt.AlignTop)
+datex2.setAlignment(Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignTop)
 datex2.setGeometry(int(800 * xscale), int(760 * yscale), int(640 * xscale), 100)
 
 # Create a drop shadow effect
@@ -2785,14 +2697,14 @@ datex2.setGraphicsEffect(shadow)
 
 datey2 = QtWidgets.QLabel(frame2)
 datey2.setObjectName('datey2')
-datey2.setStyleSheet('#datey2 { font-family:sans-serif; color: ' +
+datey2.setStyleSheet('#datey2 { font-family:"Open Sans"; color: ' +
                      Config.textcolor +
                      '; background-color: transparent; font-size: ' +
                      str(int(50 * xscale * Config.fontmult)) +
                      'px; ' +
                      Config.fontattr +
                      '}')
-datey2.setAlignment(Qt.AlignHCenter | Qt.AlignTop)
+datey2.setAlignment(Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignTop)
 datey2.setGeometry(int(800 * xscale), int(820 * yscale), int(640 * xscale), 100)
 
 # Create a drop shadow effect
@@ -2821,7 +2733,7 @@ attribution.setStyleSheet('#attribution { ' +
                           'px; ' +
                           Config.fontattr +
                           '}')
-attribution.setAlignment(Qt.AlignTop)
+attribution.setAlignment(Qt.AlignmentFlag.AlignTop)
 attribution.setGeometry(int(6 * xscale), int(3 * yscale), int(130 * xscale), 100)
 
 wxicon2 = QtWidgets.QLabel(frame2)
@@ -2839,7 +2751,7 @@ attribution2.setStyleSheet('#attribution2 { ' +
                            'px; ' +
                            Config.fontattr +
                            '}')
-attribution2.setAlignment(Qt.AlignTop)
+attribution2.setAlignment(Qt.AlignmentFlag.AlignTop)
 attribution2.setGeometry(int(6 * xscale), int(880 * yscale), int(130 * xscale), 100)
 
 ypos += 140
@@ -2852,7 +2764,7 @@ wxdesc.setStyleSheet('#wxdesc { background-color: transparent; color: ' +
                      'px; ' +
                      Config.fontattr +
                      '}')
-wxdesc.setAlignment(Qt.AlignHCenter | Qt.AlignTop)
+wxdesc.setAlignment(Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignTop)
 wxdesc.setGeometry(int(3 * xscale), int(ypos * yscale), int(300 * xscale), 100)
 
 # Create a drop shadow effect
@@ -2874,7 +2786,7 @@ wxdesc2.setStyleSheet('#wxdesc2 { background-color: transparent; color: ' +
                       'px; ' +
                       Config.fontattr +
                       '}')
-wxdesc2.setAlignment(Qt.AlignLeft | Qt.AlignTop)
+wxdesc2.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop)
 wxdesc2.setGeometry(int(400 * xscale), int(800 * yscale), int(400 * xscale), 100)
 
 # Create a drop shadow effect
@@ -2896,7 +2808,7 @@ temper.setStyleSheet('#temper { background-color: transparent; color: ' +
                      'px; ' +
                      Config.fontattr +
                      '}')
-temper.setAlignment(Qt.AlignHCenter | Qt.AlignTop)
+temper.setAlignment(Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignTop)
 temper.setGeometry(int(3 * xscale), int(ypos * yscale), int(300 * xscale), int(100 * yscale))
 
 # Create a drop shadow effect
@@ -2918,7 +2830,7 @@ temper2.setStyleSheet('#temper2 { background-color: transparent; color: ' +
                       'px; ' +
                       Config.fontattr +
                       '}')
-temper2.setAlignment(Qt.AlignHCenter | Qt.AlignTop)
+temper2.setAlignment(Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignTop)
 temper2.setGeometry(int(125 * xscale), int(780 * yscale), int(300 * xscale), 100)
 
 # Create a drop shadow effect
@@ -2941,7 +2853,7 @@ feelslike.setStyleSheet('#feelslike { background-color: transparent; color: ' +
                         'px; font-style: italic; ' +  # Add this line to make the font italic
                         Config.fontattr +
                         '}')
-feelslike.setAlignment(Qt.AlignHCenter | Qt.AlignTop)
+feelslike.setAlignment(Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignTop)
 feelslike.setGeometry(int(3 * xscale), int(ypos * yscale), int(300 * xscale), 100)
 
 # Create a drop shadow effect
@@ -2964,7 +2876,7 @@ humidity.setStyleSheet('#humidity { background-color: transparent; color: ' +
                        'px; ' +
                        Config.fontattr +
                        '}')
-humidity.setAlignment(Qt.AlignHCenter | Qt.AlignTop)
+humidity.setAlignment(Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignTop)
 humidity.setGeometry(int(3 * xscale), int(ypos * yscale), int(300 * xscale), 100)
 
 # Create a drop shadow effect
@@ -2987,7 +2899,7 @@ press.setStyleSheet('#press { background-color: transparent; color: ' +
                     'px; ' +
                     Config.fontattr +
                     '}')
-press.setAlignment(Qt.AlignHCenter | Qt.AlignTop)
+press.setAlignment(Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignTop)
 press.setGeometry(int(3 * xscale), int(ypos * yscale), int(300 * xscale), 100)
 
 # Create a drop shadow effect
@@ -3010,7 +2922,7 @@ wind.setStyleSheet('#wind { background-color: transparent; color: ' +
                    'px; ' +
                    Config.fontattr +
                    '}')
-wind.setAlignment(Qt.AlignHCenter | Qt.AlignTop)
+wind.setAlignment(Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignTop)
 wind.setGeometry(int(3 * xscale), int(ypos * yscale), int(300 * xscale), 100)
 
 # Create a drop shadow effect
@@ -3033,7 +2945,7 @@ wdate.setStyleSheet('#wdate { background-color: transparent; color: ' +
                     'px; ' +
                     Config.fontattr +
                     '}')
-wdate.setAlignment(Qt.AlignHCenter | Qt.AlignTop)
+wdate.setAlignment(Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignTop)
 wdate.setGeometry(int(3 * xscale), int(ypos * yscale), int(300 * xscale), 100)
 
 # Create a drop shadow effect
@@ -3048,14 +2960,14 @@ wdate.setGraphicsEffect(shadow)
 
 bottom = QtWidgets.QLabel(foreGround)
 bottom.setObjectName('bottom')
-bottom.setStyleSheet('#bottom { font-family:sans-serif; color: ' +
+bottom.setStyleSheet('#bottom { font-family:"Open Sans"; color: ' +
                      Config.textcolor +
                      '; background-color: transparent; font-size: ' +
                      str(int(24 * xscale * Config.fontmult)) +
                      'px; ' +
                      Config.fontattr +
                      '}')
-bottom.setAlignment(Qt.AlignHCenter | Qt.AlignTop)
+bottom.setAlignment(Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignTop)
 bottom.setGeometry(0, int(height - 50 * yscale), width, int(50 * yscale))
 
 # Create a drop shadow effect
@@ -3067,17 +2979,25 @@ shadow.setOffset(2, 2)                  # Offset for the shadow (x, y)
 # Apply the shadow effect to the label
 bottom.setGraphicsEffect(shadow)
 
+# Severe weather warning bubble: below the clock, above the sunrise/set footer.
+alertrect = QtCore.QRect(
+    int(width * 0.2),
+    int(height * 0.855),
+    int(width * 0.6),
+    int(height * 0.075))
+alertBubble = AlertBubble(foreGround, alertrect)
+
 
 temp = QtWidgets.QLabel(foreGround)
 temp.setObjectName('temp')
-temp.setStyleSheet('#temp { font-family:sans-serif; color: ' +
+temp.setStyleSheet('#temp { font-family:"Open Sans"; color: ' +
                    Config.textcolor +
                    '; background-color: transparent; font-size: ' +
                    str(int(30 * xscale * Config.fontmult)) +
                    'px; ' +
                    Config.fontattr +
                    '}')
-temp.setAlignment(Qt.AlignHCenter | Qt.AlignTop)
+temp.setAlignment(Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignTop)
 temp.setGeometry(0, int(height - 100 * yscale), width, int(50 * yscale))
 
 # Create a drop shadow effect
@@ -3090,7 +3010,6 @@ shadow.setOffset(2, 2)                  # Offset for the shadow (x, y)
 temp.setGraphicsEffect(shadow)
 
 
-owmonecall = True
 tzlatlng = pytz.utc
 forecast = []
 
@@ -3123,7 +3042,7 @@ for i in range(0, 9):
     wx = QtWidgets.QLabel(lab)
     wx.setStyleSheet('#wx { background-color: transparent; }')
     wx.setGeometry(int(100 * xscale), int(5 * yscale), int(200 * xscale), int(120 * yscale))
-    wx.setAlignment(Qt.AlignLeft | Qt.AlignTop)
+    wx.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop)
     wx.setWordWrap(True)
     wx.setObjectName('wx')
 
@@ -3137,7 +3056,7 @@ for i in range(0, 9):
     day = QtWidgets.QLabel(lab)
     day.setStyleSheet('#day { background-color: transparent; }')
     day.setGeometry(int(100 * xscale), int(75 * yscale), int(200 * xscale), int(25 * yscale))
-    day.setAlignment(Qt.AlignRight | Qt.AlignBottom)
+    day.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignBottom)
     day.setObjectName('day')
 
     # Apply shadow to the day label
@@ -3155,8 +3074,22 @@ manager = QtNetwork.QNetworkAccessManager()
 stimer = QtCore.QTimer()
 stimer.singleShot(10, qtstart)
 
-# Comment out w.show() to prevent issues on Wayland based systems. Uncomment on RPi systems.
-# w.show()
-w.showFullScreen()
+if platform.system() == 'Darwin':
+    # On macOS, showFullScreen() reserves space for the menu bar: the window
+    # ends up offset down by the menu bar height but still sized to the full
+    # screen height, so that same amount gets clipped off the bottom. A
+    # borderless window explicitly sized to the full screen avoids the clipping.
+    w.setWindowFlags(w.windowFlags() | Qt.WindowType.FramelessWindowHint)
+    w.setGeometry(rec)
+    w.show()
+    if mac_appkit is not None:
+        mac_appkit.NSApplication.sharedApplication().setPresentationOptions_(
+            mac_appkit.NSApplicationPresentationAutoHideMenuBar |
+            mac_appkit.NSApplicationPresentationAutoHideDock
+        )
+else:
+    # Comment out w.show() to prevent issues on Wayland based systems. Uncomment on RPi systems.
+    # w.show()
+    w.showFullScreen()
 
-sys.exit(app.exec_())
+sys.exit(app.exec())

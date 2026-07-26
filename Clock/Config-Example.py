@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-from PyQt5.QtGui import QColor
+from PyQt6.QtGui import QColor
 
 from GoogleMercatorProjection import LatLng  # NOQA
 
@@ -14,22 +14,33 @@ location = LatLng(primary_coordinates[0], primary_coordinates[1])
 radar_location = LatLng(primary_coordinates[0], primary_coordinates[1])
 
 noaastream = 'https://radio.weatherusa.net/NWR/KEB98.mp3' # Change to local NOAA stream
-background = 'images/mesa.jpg'
+background = 'images/mesa.jpg' # Only used if 'useslideshow' is set to 0 below
 icons = 'icons-lightblue'
 textcolor = '#FFFFFF'
-clockface = 'images/clockface3.png'
-hourhand = 'images/hourhand.png'
-minhand = 'images/minhand.png'
-sechand = 'images/sechand.png'
+
+cursor_idle_seconds = 3.0 # Seconds of no mouse movement before the cursor is hidden; 0 to disable
+
+# Severe weather warning bubble, from api.weather.gov
+noaa_alerts_enabled = 1  # 1 to show a warning bubble for active NOAA/NWS alerts, 0 to disable
+alert_refresh = 10  # minutes between severe weather alert checks
+# NWS severity levels that trigger the warning bubble; from least to most severe:
+# 'Unknown', 'Minor', 'Moderate', 'Severe', 'Extreme'
+alert_severities = ('Severe', 'Extreme')
 
 # SlideShow
 useslideshow = 1  # 1 to enable, 0 to disable
 slide_time = 300  # in seconds, 3600 per hour
 slide_bg_color = '#000'  # https://htmlcolorcodes.com/  black #000
-slideshow_url = 'https://example.com/slideshow.txt' # must be text file, one image per line
+slide_transition_ms = 1000  # crossfade duration between images, in milliseconds; 0 for an instant hard cut
+# Web Slideshow Playlist
+# 0 = random images from the Pictures/Slideshow folder in this repo
+# 1 = images listed (one URL per line) in slideshow_url below; the cache is
+#     cleared and everything re-downloaded on every launch, then the list is
+#     re-checked every 2 hours and only images new to the list are downloaded
+web_slideshow_playlist = 0
+slideshow_url = 'https://example.com/slideshow.txt' # must be text file, one image url per line
 
-# Set to Digital Mode
-digital = 1  # 1 = Digital Clock, 0 = Analog Clock
+# Digital clock
 digitalcolor = '#FFFFFF' #Color of the text
 digitalformat = '{0:%-I:%M%p}'  # Format of the digital clock face
 digitalsize = 150 # Font Size of Clock
@@ -37,8 +48,8 @@ digitalformat2 = '{0:%-I:%M:%S %p}'  # Format of the digital time on second scre
 
 # Mapbox map styles, need API key (mbapi in ApiKeys.py)
 # If no Mapbox API is set, Google Maps are used
-map_base = 'andrewhover/cm3lvxmyi00k601rygq9vcjgo'  # Custom Google Maps inspired satelite style base
-map_overlay = 'andrewhover/cm3f7fhze001i01ry1o3m600s'  # Custom Google Maps inspired style overlay
+map_base = ''  # blank uses Mapbox's default 'mapbox/satellite-streets-v12'; or your own custom style, see below
+map_overlay = ''  # optional custom overlay style (labels/roads/borders only); blank disables the overlay
 
 # For more Mapbox styles, see https://docs.mapbox.com/api/maps/styles/
 # To create custom Mapbox styles, sign-in at https://studio.mapbox.com/
@@ -74,11 +85,6 @@ dimcolor.setAlpha(0)
 # or look up the ICAO code here:
 # https://airportcodes.aero/name
 METAR = ''
-
-# Language specific wording
-# OpenWeather Language code
-#  (https://openweathermap.org/current#multi)
-Language = 'EN'
 
 # The Python Locale for date/time (locale.setlocale)
 #  '' for default Pi Setting

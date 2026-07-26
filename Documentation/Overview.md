@@ -7,13 +7,12 @@ based on the Raspberry Pi and a display monitor. The display monitor is
 assumed to be an HDMI monitor, but it will probably (possibly) work with
 the composite output as well, but this is not a design goal.  The main
 program (Clock/PyQtPiClock.py) will also run on Windows, Mac, and Linux,
-as long as Python 3 and PyQt5 is installed.
+as long as Python 3 and PyQt6 is installed.
 
-The current weather and forcast data comes from your choice of either
-OpenWeather (https://openweathermap.org/) or Tomorrow (https://www.tomorrow.io/).
+The current weather and forcast data comes from Tomorrow (https://www.tomorrow.io/).
 The maps come from your choice of either Mapbox (https://mapbox.com/) or 
 Google Maps (https://developers.google.com/maps).
-**You must get API keys from one each of those weather and map services in order to make
+**You must get API keys from Tomorrow.io and one of those map services in order to make
 this work.** They offer free subscription plans for low-usage projects such as this application.
 
 The PiClock can be customized with several supported additional things:

@@ -5,7 +5,8 @@
 #@reboot bash /home/pi/PiClock/startup.sh
 
 #
-cd "$HOME"/PiClock || exit
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" >/dev/null 2>&1 && pwd)"
+cd "$SCRIPT_DIR" || exit
 
 #
 if [ "$DISPLAY" = "" ]; then
@@ -49,12 +50,6 @@ echo "Disabling screen blanking..."
 xset s off
 xset -dpms
 xset s noblank
-
-# get rid of mouse cursor
-pgrep unclutter >/dev/null 2>&1
-if [ $? -eq 1 ]; then
-  unclutter >/dev/null 2>&1 &
-fi
 
 echo "Setting sound to max (assuming Monitor Tv controls volume)..."
 # push sound level to maximum
