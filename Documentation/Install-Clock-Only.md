@@ -206,6 +206,26 @@ time. Unlike the weather/radar API calls, alert checks are never served from
 `Clock/api_cache` - they always hit the live API, since a stale cached "no
 alerts" response could mask a genuinely new one.
 
+#### Screen brightness and always-on display
+PiClock can automatically dim the whole display at night and brighten it back
+up during the day, on a schedule you set using a 24-hour clock. This is a
+software dim (a black overlay drawn on top of everything), so it works the
+same regardless of your monitor or OS - no special hardware backlight support
+needed. It's controlled by these Config.py settings:
+  * `brightness_enabled` - 1 to enable time-based dimming, 0 to always use `day_brightness`
+  * `day_brightness` / `night_brightness` - 0-100 brightness percentage for day/night
+  * `day_start` / `night_start` - 24-hour `HH:MM` times when each period begins
+  * `brightness_transition_minutes` - minutes to fade gradually between day and
+    night brightness; 0 for an instant switch
+
+PiClock also tries, best-effort, to stop the OS from blanking or sleeping the
+display while it's running (handy since this is meant to be an always-on
+clock). This is controlled by `prevent_screen_sleep` (1 to enable, 0 to
+disable), and uses the native mechanism for your OS: `SetThreadExecutionState`
+on Windows, `caffeinate` on macOS, and `xset`/`systemd-inhibit` on Linux. Not
+every desktop environment honors these, so treat it as a best effort rather
+than a guarantee.
+
 ### Run it!
 
 ```

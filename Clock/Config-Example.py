@@ -20,6 +20,22 @@ textcolor = '#FFFFFF'
 
 cursor_idle_seconds = 3.0 # Seconds of no mouse movement before the cursor is hidden; 0 to disable
 
+# Screen Brightness
+# Dims the whole display like a night light using a software overlay, so it
+# behaves the same on every OS/monitor without needing hardware backlight
+# control. Percentages are 0 (black) to 100 (normal/full brightness).
+brightness_enabled = 1  # 1 to enable time-based dimming, 0 to always use day_brightness
+day_brightness = 100  # 0-100, brightness percentage during the day
+night_brightness = 30  # 0-100, brightness percentage at night
+day_start = '07:00'  # 24-hour clock (HH:MM) when day_brightness begins
+night_start = '22:00'  # 24-hour clock (HH:MM) when night_brightness begins
+brightness_transition_minutes = 30  # minutes to gradually fade between day/night brightness; 0 for an instant switch
+
+# Keep the display awake at all times (best-effort; prevents the OS
+# screensaver/sleep/DPMS from blanking the screen). Works on Windows, macOS,
+# and Linux (X11 and most Wayland desktop environments).
+prevent_screen_sleep = 1  # 1 to enable, 0 to disable
+
 # Severe weather warning bubble, from api.weather.gov
 noaa_alerts_enabled = 1  # 1 to show a warning bubble for active NOAA/NWS alerts, 0 to disable
 alert_refresh = 10  # minutes between severe weather alert checks

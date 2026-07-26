@@ -9,6 +9,7 @@ import os
 import platform
 import random
 import signal
+import subprocess
 import sys
 import time
 import traceback
@@ -377,6 +378,94 @@ def moon_phase(dt=None):
     return lunations % 1.0
 
 
+def _hhmm_to_minutes(value):
+    hh, mm = value.split(':')
+    return int(hh) * 60 + int(mm)
+
+
+def get_brightness_percent(now):
+    """Target 0-100 display brightness for `now`, per Config.day_start/
+    night_start (24-hour HH:MM), with an optional linear fade over
+    Config.brightness_transition_minutes at each transition."""
+    if not Config.brightness_enabled:
+        return 100
+
+    day_start = _hhmm_to_minutes(Config.day_start)
+    night_start = _hhmm_to_minutes(Config.night_start)
+    now_min = now.hour * 60 + now.minute + now.second / 60.0
+    trans = max(0.0, Config.brightness_transition_minutes)
+
+    def minutes_since(start):
+        d = now_min - start
+        if d < 0:
+            d += 24 * 60
+        return d
+
+    since_day = minutes_since(day_start)
+    since_night = minutes_since(night_start)
+
+    if trans > 0 and since_day < trans:
+        return Config.night_brightness + (Config.day_brightness - Config.night_brightness) * (since_day / trans)
+    if trans > 0 and since_night < trans:
+        return Config.day_brightness + (Config.night_brightness - Config.day_brightness) * (since_night / trans)
+
+    day_length = (night_start - day_start) % (24 * 60)
+    if since_day < day_length:
+        return Config.day_brightness
+    return Config.night_brightness
+
+
+def apply_brightness(percent):
+    global last_brightness_percent
+    percent = max(0.0, min(100.0, percent))
+    if abs(percent - last_brightness_percent) < 0.5:
+        return
+    last_brightness_percent = percent
+    alpha = int(round(255 * (1 - percent / 100.0)))
+    brightness_overlay.setStyleSheet(
+        '#brightness_overlay { background-color: rgba(0, 0, 0, %d); }' % alpha)
+
+
+def prevent_display_sleep():
+    """Best-effort: stop the OS from blanking/sleeping the display while the
+    clock is running. Each platform uses its own native mechanism; failures
+    are swallowed since not every desktop environment exposes one."""
+    global sleep_inhibit_process
+    if not Config.prevent_screen_sleep:
+        return
+    system = platform.system()
+    try:
+        if system == 'Windows':
+            import ctypes
+            ES_CONTINUOUS = 0x80000000
+            ES_SYSTEM_REQUIRED = 0x00000001
+            ES_DISPLAY_REQUIRED = 0x00000002
+            ctypes.windll.kernel32.SetThreadExecutionState(
+                ES_CONTINUOUS | ES_SYSTEM_REQUIRED | ES_DISPLAY_REQUIRED)
+        elif system == 'Darwin':
+            sleep_inhibit_process = Popen(['caffeinate', '-d', '-i'])
+        elif system == 'Linux':
+            # X11 desktops: disable the built-in screensaver/DPMS blanking.
+            for args in (['xset', 's', 'off'], ['xset', 's', 'noblank'], ['xset', '-dpms']):
+                try:
+                    subprocess.run(args, stdout=subprocess.DEVNULL,
+                                    stderr=subprocess.DEVNULL, timeout=5)
+                except (OSError, subprocess.SubprocessError):
+                    pass
+            # systemd-logind idle/sleep inhibit; covers most desktop
+            # environments on both X11 and Wayland (including Raspberry Pi OS).
+            try:
+                sleep_inhibit_process = Popen(
+                    ['systemd-inhibit', '--what=idle:sleep',
+                     '--who=PiClock', '--why=Always-on clock display',
+                     'sleep', 'infinity'],
+                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            except OSError:
+                pass
+    except Exception:
+        print('WARNING:', traceback.format_exc())
+
+
 def tick():
     global lastmin, lastday, lasttimestr
     global clockrect
@@ -385,6 +474,7 @@ def tick():
     global bottom
 
     now = datetime.datetime.now(tz=tzlocal.get_localzone())
+    apply_brightness(get_brightness_percent(now))
     timestr = Config.digitalformat.format(now)
     if Config.digitalformat.find('%I') > -1:
         if timestr[0] == '0':
@@ -2398,6 +2488,7 @@ def realquit():
 def myquit(signum, frame):
     global objradar1, objradar2, objradar3, objradar4
     global ctimer, wxtimer, temptimer, cursortimer, alerttimer
+    global sleep_inhibit_process
 
     objradar1.stop()
     objradar2.stop()
@@ -2410,6 +2501,9 @@ def myquit(signum, frame):
     alerttimer.stop()
     if Config.useslideshow:
         objimage1.stop()
+    if sleep_inhibit_process is not None:
+        sleep_inhibit_process.terminate()
+        sleep_inhibit_process = None
 
     QtCore.QTimer.singleShot(30, realquit)
 
@@ -2543,6 +2637,21 @@ except AttributeError:
     Config.cursor_idle_seconds = 3.0  # seconds of no mouse movement before the cursor is hidden; 0 disables
 
 try:
+    Config.brightness_enabled
+except AttributeError:
+    Config.brightness_enabled = 0
+    Config.day_brightness = 100
+    Config.night_brightness = 100
+    Config.day_start = '07:00'
+    Config.night_start = '22:00'
+    Config.brightness_transition_minutes = 30
+
+try:
+    Config.prevent_screen_sleep
+except AttributeError:
+    Config.prevent_screen_sleep = 1
+
+try:
     Config.web_slideshow_playlist
 except AttributeError:
     Config.web_slideshow_playlist = 0  # 0 = local images from Pictures/Slideshow, 1 = Config.slideshow_url
@@ -2637,6 +2746,8 @@ lasttimestr = ''
 weatherplayer = None
 lastkeytime = 0
 lastapiget = time.time()
+last_brightness_percent = -1
+sleep_inhibit_process = None
 
 # Pressure trend tracking: samples are recorded every time fresh weather data
 # arrives, but the displayed arrow only refreshes once an hour (see
@@ -2667,6 +2778,7 @@ if platform.system() == 'Darwin':
               'Install with: pip install pyobjc-framework-Cocoa')
 
 signal.signal(signal.SIGINT, myquit)
+signal.signal(signal.SIGTERM, myquit)
 
 w = MyMain()
 w.setWindowTitle(os.path.basename(__file__))
@@ -2697,6 +2809,16 @@ frame2.setStyleSheet('#frame2 { background-color: black; border-image: url(' +
                      Config.background + ') 0 0 0 0 stretch stretch;}')
 frame2.setVisible(False)
 frames.append(frame2)
+
+# Full-screen dimming overlay for the day/night brightness schedule; a direct
+# child of w (rather than frame1/frame2) so it stays on top no matter which
+# page is showing. Its alpha is updated from tick() via apply_brightness().
+brightness_overlay = QtWidgets.QFrame(w)
+brightness_overlay.setObjectName('brightness_overlay')
+brightness_overlay.setGeometry(0, 0, width, height)
+brightness_overlay.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
+brightness_overlay.setStyleSheet('#brightness_overlay { background-color: rgba(0, 0, 0, 0); }')
+brightness_overlay.raise_()
 
 foreGround = QtWidgets.QFrame(frame1)
 foreGround.setObjectName('foreGround')
@@ -3197,5 +3319,7 @@ else:
     # Comment out w.show() to prevent issues on Wayland based systems. Uncomment on RPi systems.
     # w.show()
     w.showFullScreen()
+
+prevent_display_sleep()
 
 sys.exit(app.exec())
