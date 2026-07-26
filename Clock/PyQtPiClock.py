@@ -710,10 +710,13 @@ def wxfinished_tm_current(data=None):
         feelslike.setText(Config.LFeelslike +
                           '%.1f' % (f['values']['temperatureApparent']) + u'°F')
 
+    press_inhg = f['values']['pressureSeaLevel']
     if Config.pressure_mbar:
-        press.setText(Config.LPressure + '%.1f' % inhg2mbar(f['values']['pressureSeaLevel']) + 'mbar')
+        pressure_str = Config.LPressure + '%.1f' % inhg2mbar(press_inhg) + 'mbar'
     else:
-        press.setText(Config.LPressure + '%.2f' % (f['values']['pressureSeaLevel']) + ' inHg')
+        pressure_str = Config.LPressure + '%.2f' % press_inhg + ' inHg'
+    # Sets the label text and feeds the raw reading into the pressure trend history.
+    set_pressure_label(pressure_str, press_inhg)
 
     humidity.setText(Config.LHumidity + '%.0f%%' % (f['values']['humidity']))
     wdate.setText('Last Updated: {0:%-I:%M %p}'.format(dt))
@@ -1184,11 +1187,52 @@ def wxfinished_metar(data=None):
 
     temper.setText(temp_str)
     temper2.setText(temp_str)
-    press.setText(pressure_str)
+    # Sets the label text and feeds the raw reading into the pressure trend history
+    # (METAR reports occasionally omit pressure, hence the None fallback).
+    set_pressure_label(pressure_str, f.press.value('IN') if f.press else None)
     humidity.setText(humidity_str)
     wind.setText(wind_speed_str)
     feelslike.setText(feelslike_str)
     wdate.setText('0:%H:%M %Z} {1}'.format(dt, Config.METAR))
+
+
+def record_pressure_sample(value_inhg):
+    # Keep a rolling 2-hour history of raw pressure readings (inHg) so
+    # update_pressure_trend() has data to compare against later.
+    global pressure_history
+    now = time.time()
+    pressure_history.append((now, value_inhg))
+    cutoff = now - PRESSURE_TREND_WINDOW_SEC
+    pressure_history[:] = [(t, v) for (t, v) in pressure_history if t >= cutoff]
+
+
+def set_pressure_label(pressure_str, value_inhg):
+    """Record a new pressure sample (if any) and (re)render the pressure label
+    using the current, possibly stale, trend arrow. The arrow itself is only
+    recalculated by update_pressure_trend(), once an hour."""
+    global pressure_label_text
+    pressure_label_text = pressure_str
+    if value_inhg is not None:
+        record_pressure_sample(value_inhg)
+    press.setText(pressure_label_text + pressure_trend_arrow)
+
+
+def update_pressure_trend():
+    """Recompute the pressure trend arrow from the last 2 hours of samples.
+    Called once an hour by pressuretrendtimer in qtstart()."""
+    global pressure_trend_arrow
+    now = time.time()
+    window = [(t, v) for (t, v) in pressure_history if t >= now - PRESSURE_TREND_WINDOW_SEC]
+    if len(window) >= 2:
+        # Compare the oldest vs. newest sample still inside the 2-hour window
+        # to decide which way pressure has been tracking.
+        delta = window[-1][1] - window[0][1]
+        if delta >= PRESSURE_TREND_DEADBAND_INHG:
+            pressure_trend_arrow = u' ↑'
+        elif delta <= -PRESSURE_TREND_DEADBAND_INHG:
+            pressure_trend_arrow = u' ↓'
+        # else: within the deadband, keep the previous arrow to avoid flicker
+    press.setText(pressure_label_text + pressure_trend_arrow)
 
 
 def getallwx():
@@ -1347,6 +1391,7 @@ def noaa_alerts_finished():
 def qtstart():
     global ctimer, wxtimer, temptimer, metadatatimer, cursortimer, alerttimer
     global apicachecleanuptimer
+    global pressuretrendtimer
     global objradar1
     global objradar2
     global objradar3
@@ -1402,6 +1447,12 @@ def qtstart():
     cursortimer = QtCore.QTimer()
     cursortimer.timeout.connect(cursor_idle_tick)
     cursortimer.start(CURSOR_POLL_MS)
+
+    # Recompute the pressure up/down arrow once an hour, based on the last 2
+    # hours of samples recorded by set_pressure_label() on each weather refresh.
+    pressuretrendtimer = QtCore.QTimer()
+    pressuretrendtimer.timeout.connect(update_pressure_trend)
+    pressuretrendtimer.start(int(1000 * 60 * 60 + random.uniform(1000, 10000)))
 
     wxtimer = QtCore.QTimer()
     wxtimer.timeout.connect(getallwx)
@@ -1808,7 +1859,7 @@ class Radar(QtWidgets.QLabel):
     # keeps all radars in lockstep, both on startup and while running, no
     # matter when each one's timer happened to start.
     TICK_MS = 200
-    HOLD_TICKS = 5  # ticks spent holding on the newest frame before sweeping through history
+    HOLD_TICKS = 10  # ticks spent holding on the newest frame before sweeping through history
 
     def __init__(self, parent, radar, rect, myname):
         self.myname = myname
@@ -2586,6 +2637,15 @@ lasttimestr = ''
 weatherplayer = None
 lastkeytime = 0
 lastapiget = time.time()
+
+# Pressure trend tracking: samples are recorded every time fresh weather data
+# arrives, but the displayed arrow only refreshes once an hour (see
+# pressuretrendtimer in qtstart()), based on the change over the last 2 hours.
+PRESSURE_TREND_WINDOW_SEC = 2 * 60 * 60
+PRESSURE_TREND_DEADBAND_INHG = 0.02  # ~0.68 hPa; ignore noise below this over the window
+pressure_history = []  # list of (unix_timestamp, pressure_inHg)
+pressure_trend_arrow = ''
+pressure_label_text = ''
 
 app = QtWidgets.QApplication(sys.argv)
 rec = app.primaryScreen().geometry()
