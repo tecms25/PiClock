@@ -36,16 +36,24 @@ configure_piclock() {
   local CFG="Clock/Config.py"
   local KEYS="Clock/ApiKeys.py"
   local REPLY LAT LON TMAPI MAPCHOICE MBAPI GOOGLEAPI NOAASTREAM SLIDECHOICE SLIDEURL
+  local MAPBASE MAPOVERLAY
+  local DIM_ENABLE DAYBRIGHT NIGHTBRIGHT DAYSTART NIGHTSTART TRANSMIN KEEPAWAKE
+
+  # Example numbers for the lat/lon prompts, regenerated each run so a real
+  # address is never hardcoded into this script.
+  local EXAMPLE_LAT EXAMPLE_LON
+  EXAMPLE_LAT="$(( (RANDOM % 180) - 90 )).$(printf '%04d' $((RANDOM % 10000)))"
+  EXAMPLE_LON="$(( (RANDOM % 360) - 180 )).$(printf '%04d' $((RANDOM % 10000)))"
 
   echo ""
   echo "--- Location ---"
   while true; do
-    read -r -p "Latitude (decimal degrees, e.g. 42.8045): " LAT
+    read -r -p "Latitude (decimal degrees, e.g. $EXAMPLE_LAT): " LAT
     [[ "$LAT" =~ ^-?[0-9]+(\.[0-9]+)?$ ]] && break
     echo "Please enter a valid decimal number."
   done
   while true; do
-    read -r -p "Longitude (decimal degrees, e.g. -77.7871): " LON
+    read -r -p "Longitude (decimal degrees, e.g. $EXAMPLE_LON): " LON
     [[ "$LON" =~ ^-?[0-9]+(\.[0-9]+)?$ ]] && break
     echo "Please enter a valid decimal number."
   done
@@ -82,7 +90,16 @@ configure_piclock() {
     read -r -p "Mapbox access token (https://www.mapbox.com/signup/, blank to skip): " MBAPI
     if [ -n "$MBAPI" ]; then
       set_py_line "$KEYS" '^#? *mbapi *=' "mbapi = $(py_quote "$MBAPI")"
-      echo "Using the default Mapbox satellite style; see Clock/Config.py (map_base/map_overlay, radar1-4) to customize further."
+
+      read -r -p "Custom Mapbox base map style (e.g. username/style-id, blank for Mapbox's default satellite style): " MAPBASE
+      if [ -n "$MAPBASE" ]; then
+        set_py_line "$CFG" '^map_base *=' "map_base = $(py_quote "$MAPBASE")  # blank uses Mapbox's default 'mapbox/satellite-streets-v12'; or your own custom style, see below"
+      fi
+      read -r -p "Custom Mapbox overlay style, e.g. for labels/roads/borders (blank to disable): " MAPOVERLAY
+      if [ -n "$MAPOVERLAY" ]; then
+        set_py_line "$CFG" '^map_overlay *=' "map_overlay = $(py_quote "$MAPOVERLAY")  # optional custom overlay style (labels/roads/borders only); blank disables the overlay"
+      fi
+      echo "See Clock/Config.py (map_base/map_overlay, radar1-4) to customize further."
     fi
   fi
 
@@ -125,7 +142,84 @@ configure_piclock() {
   fi
 
   echo ""
+  echo "--- Screen Brightness ---"
+  read -r -p "Automatically dim the display at night? [Y/n] " DIM_ENABLE
+  if [ "$DIM_ENABLE" = "n" ] || [ "$DIM_ENABLE" = "N" ]; then
+    set_py_line "$CFG" '^brightness_enabled *=' "brightness_enabled = 0  # 1 to enable time-based dimming, 0 to always use day_brightness"
+  else
+    set_py_line "$CFG" '^brightness_enabled *=' "brightness_enabled = 1  # 1 to enable time-based dimming, 0 to always use day_brightness"
+
+    while true; do
+      read -r -p "Daytime brightness percentage (0-100) [100]: " DAYBRIGHT
+      DAYBRIGHT=${DAYBRIGHT:-100}
+      [[ "$DAYBRIGHT" =~ ^[0-9]+$ ]] && [ "$DAYBRIGHT" -le 100 ] && break
+      echo "Please enter a whole number from 0 to 100."
+    done
+    set_py_line "$CFG" '^day_brightness *=' "day_brightness = $DAYBRIGHT  # 0-100, brightness percentage during the day"
+
+    while true; do
+      read -r -p "Nighttime brightness percentage (0-100) [30]: " NIGHTBRIGHT
+      NIGHTBRIGHT=${NIGHTBRIGHT:-30}
+      [[ "$NIGHTBRIGHT" =~ ^[0-9]+$ ]] && [ "$NIGHTBRIGHT" -le 100 ] && break
+      echo "Please enter a whole number from 0 to 100."
+    done
+    set_py_line "$CFG" '^night_brightness *=' "night_brightness = $NIGHTBRIGHT  # 0-100, brightness percentage at night"
+
+    while true; do
+      read -r -p "Time day brightness begins, 24-hour HH:MM [07:00]: " DAYSTART
+      DAYSTART=${DAYSTART:-07:00}
+      [[ "$DAYSTART" =~ ^([01][0-9]|2[0-3]):[0-5][0-9]$ ]] && break
+      echo "Please enter a time as HH:MM using a 24-hour clock, e.g. 07:00."
+    done
+    set_py_line "$CFG" '^day_start *=' "day_start = $(py_quote "$DAYSTART")  # 24-hour clock (HH:MM) when day_brightness begins"
+
+    while true; do
+      read -r -p "Time night brightness begins, 24-hour HH:MM [22:00]: " NIGHTSTART
+      NIGHTSTART=${NIGHTSTART:-22:00}
+      [[ "$NIGHTSTART" =~ ^([01][0-9]|2[0-3]):[0-5][0-9]$ ]] && break
+      echo "Please enter a time as HH:MM using a 24-hour clock, e.g. 22:00."
+    done
+    set_py_line "$CFG" '^night_start *=' "night_start = $(py_quote "$NIGHTSTART")  # 24-hour clock (HH:MM) when night_brightness begins"
+
+    while true; do
+      read -r -p "Minutes to fade gradually between day/night brightness, 0 for instant [30]: " TRANSMIN
+      TRANSMIN=${TRANSMIN:-30}
+      [[ "$TRANSMIN" =~ ^[0-9]+$ ]] && break
+      echo "Please enter a whole number of minutes."
+    done
+    set_py_line "$CFG" '^brightness_transition_minutes *=' "brightness_transition_minutes = $TRANSMIN  # minutes to gradually fade between day/night brightness; 0 for an instant switch"
+  fi
+
+  read -r -p "Keep the display always on (prevent OS screensaver/sleep while PiClock runs)? [Y/n] " KEEPAWAKE
+  if [ "$KEEPAWAKE" = "n" ] || [ "$KEEPAWAKE" = "N" ]; then
+    set_py_line "$CFG" '^prevent_screen_sleep *=' "prevent_screen_sleep = 0  # 1 to enable, 0 to disable"
+  else
+    set_py_line "$CFG" '^prevent_screen_sleep *=' "prevent_screen_sleep = 1  # 1 to enable, 0 to disable"
+  fi
+
+  echo ""
   echo "Configuration saved to Clock/Config.py and Clock/ApiKeys.py."
+}
+
+# Best-effort: disables GNOME's idle screen blanking, auto-lock, and
+# auto-dim, so an always-on display doesn't fight with PiClock's own
+# brightness/sleep-prevention settings. No-op if gsettings isn't present
+# (e.g. non-GNOME desktops, headless installs).
+configure_gnome_idle() {
+  command -v gsettings >/dev/null 2>&1 || return 0
+
+  echo ""
+  echo "--- Always-on display (GNOME) ---"
+  read -r -p "Disable GNOME idle screen blanking, auto-lock, and auto-dim? [Y/n] " REPLY
+  if [ "$REPLY" = "n" ] || [ "$REPLY" = "N" ]; then
+    return 0
+  fi
+
+  gsettings set org.gnome.desktop.session idle-delay 0 2>/dev/null || true
+  gsettings set org.gnome.desktop.screensaver lock-enabled false 2>/dev/null || true
+  gsettings set org.gnome.settings-daemon.plugins.power ambient-enabled false 2>/dev/null || true
+  gsettings set org.gnome.settings-daemon.plugins.power idle-dim false 2>/dev/null || true
+  echo "GNOME idle blanking, lock, and auto-dim disabled."
 }
 
 echo "=== PiClock Installer ==="
@@ -252,6 +346,8 @@ if [ "$OS_NAME" = "Linux" ] && [ -n "$XDG_CURRENT_DESKTOP$DISPLAY" ]; then
     ln -f PiClock.desktop "$HOME/.config/autostart/PiClock.desktop"
     echo "PiClock.desktop linked to ~/Desktop and ~/.config/autostart"
   fi
+
+  configure_gnome_idle
 fi
 
 echo ""
