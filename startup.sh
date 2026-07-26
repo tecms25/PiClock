@@ -45,15 +45,18 @@ fi
 #xmessage -timeout 5 Starting PiClock... &
 zenity --info --timeout 3 --text "Starting PiClock..." >/dev/null 2>&1 &
 
-# stop screen blanking
-echo "Disabling screen blanking..."
-xset s off
-xset -dpms
-xset s noblank
+# stop screen blanking (xset is X11-only; skip on non-Linux dev machines and
+# on Wayland sessions, where xset has no effect and may just error out)
+if [ "$(uname -s)" = "Linux" ] && [ -z "$WAYLAND_DISPLAY" ] && [ "$XDG_SESSION_TYPE" != "wayland" ]; then
+  echo "Disabling screen blanking..."
+  xset s off
+  xset -dpms
+  xset s noblank
+fi
 
-echo "Setting sound to max (assuming Monitor Tv controls volume)..."
+# echo "Setting sound to max (assuming Monitor Tv controls volume)..."
 # push sound level to maximum
-amixer cset numid=1 -- 400 >/dev/null 2>&1
+# amixer cset numid=1 -- 400 >/dev/null 2>&1
 
 # virtual environment
 echo "Activating virtual environment..."
@@ -66,18 +69,19 @@ if python3 -c "import rpi_ws281x" >/dev/null 2>&1; then
   pgrep -f NeoAmbi.py
   if [ $? -eq 1 ]; then
     echo "Starting NeoPixel Ambilight Service..."
-    sudo python3 NeoAmbi.py &
+    python3 NeoAmbi.py &
   fi
 fi
 cd ..
 
 echo "Checking for GPIO Buttons..."
-# gpio button to keyboard input
-if [ -x Button/gpio-keys ]; then
+# gpio button to keyboard input (Button/gpio-keys is a compiled ARM/Linux
+# binary; skip it on non-Linux dev machines where it can't execute at all)
+if [ "$(uname -s)" = "Linux" ] && [ -x Button/gpio-keys ]; then
   pgrep -f gpio-keys
   if [ $? -eq 1 ]; then
     echo "Starting gpio-keys Service..."
-    sudo Button/gpio-keys 23:KEY_SPACE 24:KEY_F2 25:KEY_UP &
+    Button/gpio-keys 23:KEY_SPACE 24:KEY_F2 25:KEY_UP &
   fi
 fi
 
