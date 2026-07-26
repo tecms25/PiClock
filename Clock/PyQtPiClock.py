@@ -81,6 +81,40 @@ def api_cache_write(url, data):
         print(f'WARNING: unable to write API cache for {url}: {e}')
 
 
+# Ceiling well beyond any max_age used by an api_cache_read() call (the
+# longest is Config.weather_refresh, typically 15 min); anything still
+# fresh enough to ever be read is never this old, so the sweep only ever
+# removes entries that have already aged out and can no longer be reused.
+API_CACHE_SWEEP_MAX_AGE_SECONDS = 60 * 60
+API_CACHE_SWEEP_INTERVAL_MS = 60 * 60 * 1000
+
+
+def api_cache_cleanup():
+    """Delete API_CACHE_DIR entries older than API_CACHE_SWEEP_MAX_AGE_SECONDS.
+
+    Without this, api_cache/ grows forever: every distinct radar frame/tile
+    URL gets its own file, RainViewer publishes a brand-new one every 10
+    minutes, and nothing else ever removes old entries.
+    """
+    try:
+        entries = os.listdir(API_CACHE_DIR)
+    except OSError as e:
+        print(f'WARNING: unable to list API cache dir for cleanup: {e}')
+        return
+    now = time.time()
+    removed = 0
+    for name in entries:
+        path = os.path.join(API_CACHE_DIR, name)
+        try:
+            if now - os.path.getmtime(path) > API_CACHE_SWEEP_MAX_AGE_SECONDS:
+                os.remove(path)
+                removed += 1
+        except OSError as e:
+            print(f'WARNING: unable to remove stale API cache file {name}: {e}')
+    if removed:
+        print(f'INFO: API cache cleanup removed {removed} stale file(s)')
+
+
 # --- Daily log rotation (at local midnight), keeping PyQtPiClock.1.log ... .7.log ---
 class _DailyRotatingLineLogger:
     def __init__(self, log_path: str, keep: int = 7, tee_to=None):
@@ -1312,6 +1346,7 @@ def noaa_alerts_finished():
 
 def qtstart():
     global ctimer, wxtimer, temptimer, metadatatimer, cursortimer, alerttimer
+    global apicachecleanuptimer
     global objradar1
     global objradar2
     global objradar3
@@ -1384,6 +1419,12 @@ def qtstart():
 
     # Fetch metadata immediately on startup
     get_rainviewer_metadata()
+
+    # Sweep stale API cache files on startup, then periodically thereafter
+    apicachecleanuptimer = QtCore.QTimer()
+    apicachecleanuptimer.timeout.connect(api_cache_cleanup)
+    apicachecleanuptimer.start(API_CACHE_SWEEP_INTERVAL_MS)
+    api_cache_cleanup()
 
     # Check for active NOAA/NWS severe weather alerts, then on a timer
     alerttimer = QtCore.QTimer()
@@ -3079,7 +3120,12 @@ if platform.system() == 'Darwin':
     # ends up offset down by the menu bar height but still sized to the full
     # screen height, so that same amount gets clipped off the bottom. A
     # borderless window explicitly sized to the full screen avoids the clipping.
-    w.setWindowFlags(w.windowFlags() | Qt.WindowType.FramelessWindowHint)
+    # NoDropShadowWindowHint suppresses the native NSWindow drop shadow Cocoa
+    # would otherwise still render around a frameless window, which shows up
+    # as a thin border around the edges of the screen.
+    w.setWindowFlags(w.windowFlags() |
+                      Qt.WindowType.FramelessWindowHint |
+                      Qt.WindowType.NoDropShadowWindowHint)
     w.setGeometry(rec)
     w.show()
     if mac_appkit is not None:
