@@ -1,18 +1,20 @@
 # PiClock Updates and Improvements
-
 Fork of PiClock that uses custom maps from MapBox, for better contrast 
 between the weather radar and the maps, with an additional map overlay so that 
 rain/snow clouds do not obscure map information, such as labels, borders, and roads.
-Also added is text shadows/borders for easier visibility. THe original version can be hard to read with certain backgrounds.
-Several other UX and language updates have been added, along with the ability to specify remote images for a slideshow.
+Also added is text shadows/borders for easier visibility. The original version can be hard to read with certain backgrounds.
+Several other UX and language updates have been added, along with the ability to specify remote images for a slideshow, 
+addition of NOAA weather warnings, and several codebase refactorings, including to PyQt6. Other smaller changes were made to 
+support more streamlined debugging, and enhance data caching to streamline API usages.
 
-This PiClock fork is removing use of OpenWeatherMaps. Current PiClock support doesn't use v3 and my experience with OWM
-has been mediocore at best. All code will be directed for use with Tomorrow.io. Although they support less free API calls,
-I've found their forecasting to be better. Additional sources will be added if deemed accurate enough.
+This PiClock fork has removed use of OpenWeatherMap in favor of Tomorrow.io. My experience with OWM
+was mediocre at best, and although Tomorrow.io supports fewer free API calls, I've found their
+forecasting to be better. Additional sources will be added if deemed accurate enough. The analog clock has also been removed. 
+The digital display looks much sleaker and I didn't intend to support it for my own purposes.
 
 ## Original PiClock (https://github.com/n0bel/PiClock)
-Thanks to N0BEL for the original codebase. I've been running a PiClock in one fashion or another for almost a decade.
-Additional thanks to SerBrynden for the Python3 and PyQt5 updates. This repository is originally forked from his PiClock fork.
+Thanks to N0BEL for the original codebase. I've been running a PiClock in one fashion or another for over a decade.
+Additional thanks to SerBrynden for the Python3 and PyQt5 updates. This repository is originally forked from his fork.
 A Fancy Clock built around a monitor and a Raspberry Pi
 
 ![PiClock Picture](Pictures/20150307_222711.jpg)

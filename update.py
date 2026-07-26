@@ -1,6 +1,8 @@
 import os
 import re
 
+os.chdir(os.path.dirname(os.path.abspath(__file__)))
+
 print('\nUpdating Python Package Manager')
 cmd = 'python3 -m pip install --upgrade pip'
 print(cmd)
@@ -21,62 +23,43 @@ if os.path.isfile(buttonFileName):
     os.chmod(buttonFileName, 0o744)
 
 apikeysFileName = 'Clock/ApiKeys.py'
-wuapi_re = re.compile('\\s*wuapi\\s*=')
-dsapi_re = re.compile('\\s*dsapi\\s*=')
-ccapi_re = re.compile('\\s*ccapi\\s*=')
+# Providers no longer supported; any leftover key line for these gets stripped out.
+deprecated_key_res = {
+    'wuapi': re.compile('\\s*wuapi\\s*='),
+    'dsapi': re.compile('\\s*dsapi\\s*='),
+    'ccapi': re.compile('\\s*ccapi\\s*='),
+    'owmapi': re.compile('\\s*owmapi\\s*='),
+}
 tmapi_re = re.compile('\\s*tmapi\\s*=')
-owmapi_re = re.compile('\\s*owmapi\\s*=')
 
 print('\nChecking ' + apikeysFileName)
 if os.path.isfile(apikeysFileName):
     altered = False
     foundtm = False
-    foundowm = False
     newfile = ''
     apikeys = open(apikeysFileName, 'r')
     for aline in apikeys:
         if tmapi_re.match(aline):
             foundtm = True
-        if owmapi_re.match(aline):
-            foundowm = True
-        if wuapi_re.match(aline):
-            print('Removing wuapi key from ' + apikeysFileName)
-            altered = True
-        if dsapi_re.match(aline):
-            print('Removing dsapi key from ' + apikeysFileName)
-            altered = True
-        if ccapi_re.match(aline):
-            print('Removing ccapi key from ' + apikeysFileName)
-            altered = True
-        else:
+        deprecated = False
+        for name, pattern in deprecated_key_res.items():
+            if pattern.match(aline):
+                print('Removing ' + name + ' key from ' + apikeysFileName)
+                altered = True
+                deprecated = True
+                break
+        if not deprecated:
             newfile += aline
     apikeys.close()
 
-    if not foundtm and not foundowm:
-        print('\nThis version of PiClock requires a new weather API key.')
-        while 1:
-            print('Please select your weather provider:')
-            print('  <1> OpenWeatherMap.org (https://openweathermap.org/price)')
-            print('  <2> Tomorrow.io (https://www.tomorrow.io/weather-api/)')
-            print('Selection (1 or 2)')
-            choice = int(input('? '))
-            if 1 <= choice <= 2:
-                break
-        if choice == 1:
-            print('Enter your OpenWeatherMap.org API key.')
-            print('key: '),
-            k = input('key: ')
-            k = k.strip()
-            if len(k) > 1:
-                newfile += 'owmapi = \'' + k + '\''
-                altered = True
-        else:
-            print('Enter your Tomorrow.io API key.')
-            k = input('key: ')
-            k = k.strip()
-            if len(k) > 1:
-                newfile += 'tmapi = \'' + k + '\''
-                altered = True
+    if not foundtm:
+        print('\nThis version of PiClock requires a Tomorrow.io API key.')
+        print('Get one at https://www.tomorrow.io/weather-api/')
+        k = input('key: ')
+        k = k.strip()
+        if len(k) > 1:
+            newfile += 'tmapi = \'' + k + '\'\n'
+            altered = True
 
     if altered:
         print('\nWriting updated ' + apikeysFileName)
