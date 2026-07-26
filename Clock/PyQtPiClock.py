@@ -426,11 +426,16 @@ def apply_brightness(percent):
         '#brightness_overlay { background-color: rgba(0, 0, 0, %d); }' % alpha)
 
 
+def _macos_declare_user_active():
+    Popen(['caffeinate', '-u', '-t', '5'],
+          stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+
 def prevent_display_sleep():
     """Best-effort: stop the OS from blanking/sleeping the display while the
     clock is running. Each platform uses its own native mechanism; failures
     are swallowed since not every desktop environment exposes one."""
-    global sleep_inhibit_process
+    global sleep_inhibit_process, keepalive_timer
     if not Config.prevent_screen_sleep:
         return
     system = platform.system()
@@ -444,6 +449,15 @@ def prevent_display_sleep():
                 ES_CONTINUOUS | ES_SYSTEM_REQUIRED | ES_DISPLAY_REQUIRED)
         elif system == 'Darwin':
             sleep_inhibit_process = Popen(['caffeinate', '-d', '-i'])
+            # 'caffeinate -d -i' only stops true display/system sleep; macOS's
+            # screensaver and lock-screen run off a separate HID-idle clock
+            # that ignores it. Periodically declaring "user activity" (the
+            # same signal IOPMAssertionDeclareUserActivity sends for a real
+            # key press/mouse move) resets that clock too, so the screensaver
+            # and lock never trigger.
+            keepalive_timer = QtCore.QTimer()
+            keepalive_timer.timeout.connect(_macos_declare_user_active)
+            keepalive_timer.start(45 * 1000)
         elif system == 'Linux':
             # X11 desktops: disable the built-in screensaver/DPMS blanking.
             for args in (['xset', 's', 'off'], ['xset', 's', 'noblank'], ['xset', '-dpms']):
@@ -1442,6 +1456,15 @@ def get_noaa_alerts():
     noaaAlertReply.finished.connect(noaa_alerts_finished)
 
 
+def _parse_alert_time(value):
+    if not value:
+        return None
+    try:
+        return dateutil.parser.parse(value).astimezone(tzlocal.get_localzone())
+    except (ValueError, OverflowError):
+        return None
+
+
 def noaa_alerts_finished():
     global noaaAlertReply, alertBubble
 
@@ -1461,16 +1484,18 @@ def noaa_alerts_finished():
     alerts = []
     for feature in alertdata.get('features', []):
         props = feature.get('properties', {})
-        expires = None
-        if props.get('expires'):
-            try:
-                expires = dateutil.parser.parse(props['expires']).astimezone(tzlocal.get_localzone())
-            except (ValueError, OverflowError):
-                expires = None
         alerts.append({
             'event': props.get('event', 'Alert'),
             'headline': props.get('headline', ''),
-            'expires': expires,
+            'description': props.get('description', '') or '',
+            'instruction': props.get('instruction', '') or '',
+            'area': props.get('areaDesc', ''),
+            'severity': props.get('severity', ''),
+            'certainty': props.get('certainty', ''),
+            'urgency': props.get('urgency', ''),
+            'sender': props.get('senderName', ''),
+            'effective': _parse_alert_time(props.get('effective')),
+            'expires': _parse_alert_time(props.get('expires')),
         })
 
     if alerts:
@@ -1588,25 +1613,95 @@ SLIDESHOW_IMAGE_EXTENSIONS = ('.jpg', '.jpeg', '.png', '.gif', '.bmp', '.webp')
 
 
 ALERT_CYCLE_MS = 6000  # how long each alert shows before cycling to the next, when more than one is active
+TICKER_PX_PER_TICK = 2  # ticker scroll speed
+TICKER_TICK_MS = 30
+TICKER_GAP_PX = 80  # blank gap between one loop of ticker text and the next
 
 
-class AlertBubble(QtWidgets.QLabel):
-    """Red, semi-transparent warning bubble for active NOAA/NWS severe weather
+class _Ticker(QtWidgets.QWidget):
+    """A single line of text that scrolls continuously right-to-left, like a
+    news/weather ticker, when it's too wide to fit; otherwise sits still."""
+
+    def __init__(self, parent):
+        super().__init__(parent)
+        self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+        self._label = QtWidgets.QLabel(self)
+        self._label.setStyleSheet('background: transparent;')
+        self._label.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+        self._x = 0
+
+        self._timer = QtCore.QTimer(self)
+        self._timer.timeout.connect(self._advance)
+        self._timer.start(TICKER_TICK_MS)
+
+    def set_text(self, text, stylesheet):
+        self._label.setStyleSheet('background: transparent; ' + stylesheet)
+        self._label.setText(text)
+        self._label.adjustSize()
+        self._label.setFixedHeight(max(self.height(), self._label.sizeHint().height()))
+        self._x = 0
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        if self._label.text():
+            self._label.setFixedHeight(max(self.height(), self._label.sizeHint().height()))
+
+    def _advance(self):
+        if not self.isVisible() or not self._label.text():
+            return
+        text_width = self._label.width()
+        if text_width <= self.width():
+            self._label.move(0, 0)
+            return
+        self._x -= TICKER_PX_PER_TICK
+        if self._x < -(text_width + TICKER_GAP_PX):
+            self._x = self.width()
+        self._label.move(self._x, 0)
+
+
+class _EventSink(QtWidgets.QFrame):
+    """A plain QFrame that swallows mouse presses so taps inside it don't
+    propagate up to (and dismiss) an ancestor overlay."""
+
+    def mousePressEvent(self, event):
+        pass
+
+
+class AlertBubble(QtWidgets.QFrame):
+    """Red, semi-transparent warning bar for active NOAA/NWS severe weather
     alerts (see get_noaa_alerts()). Hidden when there are none; fades in/out
-    as alerts appear or clear, and cycles through multiple active alerts."""
+    as alerts appear or clear, cycles through multiple active alerts, and
+    scrolls the headline/area when it doesn't fit. Tap it for full details."""
 
-    def __init__(self, parent, rect):
-        QtWidgets.QLabel.__init__(self, parent)
+    def __init__(self, parent, rect, detail_panel):
+        QtWidgets.QFrame.__init__(self, parent)
+        self.detail_panel = detail_panel
         self.setObjectName('alertBubble')
         self.setGeometry(rect)
-        self.setWordWrap(True)
-        self.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
         self.setStyleSheet(
             '#alertBubble { background-color: rgba(190, 20, 20, 195); '
-            'border-radius: ' + str(int(rect.height() / 2.4)) + 'px; '
+            'border-radius: ' + str(int(rect.height() / 3.2)) + 'px; }')
+
+        pad_x = int(rect.width() * 0.05)
+        title_style = (
             'color: #FFFFFF; font-family:"Open Sans"; font-weight: bold; '
-            'font-size: ' + str(int(22 * xscale * Config.fontmult)) + 'px; ' +
-            Config.fontattr + '}')
+            'font-size: ' + str(int(21 * xscale * Config.fontmult)) + 'px; ' + Config.fontattr)
+        self._ticker_style = (
+            'color: #FFE2E2; font-family:"Open Sans"; '
+            'font-size: ' + str(int(15 * xscale * Config.fontmult)) + 'px; ' + Config.fontattr)
+
+        self.title_label = QtWidgets.QLabel(self)
+        self.title_label.setGeometry(pad_x, int(rect.height() * 0.05),
+                                      rect.width() - pad_x * 2, int(rect.height() * 0.55))
+        self.title_label.setWordWrap(True)
+        self.title_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.title_label.setStyleSheet('background: transparent; ' + title_style)
+        self.title_label.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+
+        self.ticker = _Ticker(self)
+        self.ticker.setGeometry(pad_x, int(rect.height() * 0.62),
+                                 rect.width() - pad_x * 2, int(rect.height() * 0.32))
 
         self._opacity_effect = QtWidgets.QGraphicsOpacityEffect(self)
         self._opacity_effect.setOpacity(0.0)
@@ -1642,10 +1737,20 @@ class AlertBubble(QtWidgets.QLabel):
 
     def _show_current(self):
         alert = self.alerts[self.index]
-        text = alert['event'].upper()
+        title = alert['event'].upper()
         if alert.get('expires'):
-            text += '\nuntil {0:%-I:%M %p}'.format(alert['expires'])
-        self.setText(text)
+            title += '  ·  until {0:%-I:%M %p}'.format(alert['expires'])
+        if len(self.alerts) > 1:
+            title += '  ({0}/{1})'.format(self.index + 1, len(self.alerts))
+        self.title_label.setText(title)
+
+        ticker_bits = [b for b in (alert.get('area'), alert.get('headline')) if b]
+        ticker_bits.append('Tap for full details')
+        self.ticker.set_text('     •     '.join(ticker_bits), self._ticker_style)
+
+    def mousePressEvent(self, event):
+        if self.alerts:
+            self.detail_panel.show_alert(self.alerts, self.index)
 
     def _fade(self, target):
         if self._anim is not None:
@@ -1661,6 +1766,146 @@ class AlertBubble(QtWidgets.QLabel):
             anim.finished.connect(self.hide)
         self._anim = anim
         anim.start()
+
+
+class AlertDetailPanel(QtWidgets.QFrame):
+    """Full-screen scrim with a centered card showing the complete text of a
+    NOAA/NWS alert (opened by tapping an AlertBubble). Tapping the scrim, or
+    the close button, dismisses it; prev/next browse other active alerts."""
+
+    def __init__(self, parent, screen_width, screen_height):
+        super().__init__(parent)
+        self.setObjectName('alertDetailScrim')
+        self.setGeometry(0, 0, screen_width, screen_height)
+        self.setStyleSheet('#alertDetailScrim { background-color: rgba(0, 0, 0, 165); }')
+        self.hide()
+
+        card_w = int(screen_width * 0.62)
+        card_h = int(screen_height * 0.72)
+        card_x = int((screen_width - card_w) / 2)
+        card_y = int((screen_height - card_h) / 2)
+        pad = int(card_w * 0.045)
+
+        self.card = _EventSink(self)
+        self.card.setObjectName('alertDetailCard')
+        self.card.setGeometry(card_x, card_y, card_w, card_h)
+        self.card.setStyleSheet(
+            '#alertDetailCard { background-color: rgba(32, 32, 32, 240); '
+            'border: 2px solid rgba(190, 20, 20, 255); border-radius: ' +
+            str(int(card_w * 0.02)) + 'px; }')
+
+        self.title_label = QtWidgets.QLabel(self.card)
+        self.title_label.setGeometry(pad, pad, card_w - pad * 2 - 60, int(card_h * 0.11))
+        self.title_label.setWordWrap(True)
+        self.title_label.setStyleSheet(
+            'background: transparent; color: #FF6B6B; font-family:"Open Sans"; '
+            'font-weight: bold; font-size: ' + str(int(26 * xscale)) + 'px;')
+
+        self.close_button = QtWidgets.QPushButton('✕', self.card)
+        self.close_button.setGeometry(card_w - pad - 46, pad, 46, 46)
+        self.close_button.setStyleSheet(
+            'QPushButton { background-color: rgba(255,255,255,30); color: #FFFFFF; '
+            'border: none; border-radius: 23px; font-size: 18px; } '
+            'QPushButton:pressed { background-color: rgba(255,255,255,70); }')
+        self.close_button.clicked.connect(self.hide)
+
+        meta_y = pad + int(card_h * 0.12)
+        self.meta_label = QtWidgets.QLabel(self.card)
+        self.meta_label.setGeometry(pad, meta_y, card_w - pad * 2, int(card_h * 0.14))
+        self.meta_label.setWordWrap(True)
+        self.meta_label.setStyleSheet(
+            'background: transparent; color: #CCCCCC; font-family:"Open Sans"; '
+            'font-size: ' + str(int(15 * xscale)) + 'px;')
+
+        nav_h = int(card_h * 0.08)
+        body_y = meta_y + int(card_h * 0.15)
+        body_h = card_h - body_y - nav_h - pad
+        self.text_edit = QtWidgets.QTextEdit(self.card)
+        self.text_edit.setGeometry(pad, body_y, card_w - pad * 2, body_h)
+        self.text_edit.setReadOnly(True)
+        self.text_edit.setStyleSheet(
+            'QTextEdit { background-color: rgba(255,255,255,15); color: #FFFFFF; '
+            'border: none; border-radius: 10px; padding: 10px; '
+            'font-family:"Open Sans"; font-size: ' + str(int(15 * xscale)) + 'px; }')
+
+        nav_y = card_h - pad - nav_h + int(nav_h * 0.1)
+        self.nav_prev = QtWidgets.QPushButton('‹', self.card)
+        self.nav_next = QtWidgets.QPushButton('›', self.card)
+        self.nav_prev.setGeometry(pad, nav_y, 50, nav_h)
+        self.nav_next.setGeometry(card_w - pad - 50, nav_y, 50, nav_h)
+        for btn in (self.nav_prev, self.nav_next):
+            btn.setStyleSheet(
+                'QPushButton { background-color: rgba(255,255,255,25); color: #FFFFFF; '
+                'border: none; border-radius: 8px; font-size: 22px; font-weight: bold; } '
+                'QPushButton:pressed { background-color: rgba(255,255,255,65); }')
+        self.nav_prev.clicked.connect(lambda: self._navigate(-1))
+        self.nav_next.clicked.connect(lambda: self._navigate(1))
+
+        self.page_label = QtWidgets.QLabel(self.card)
+        self.page_label.setGeometry(pad + 60, nav_y, card_w - pad * 2 - 120, nav_h)
+        self.page_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.page_label.setStyleSheet(
+            'background: transparent; color: #999999; font-family:"Open Sans"; '
+            'font-size: ' + str(int(13 * xscale)) + 'px;')
+
+        self._alerts = []
+        self._index = 0
+
+    def show_alert(self, alerts, index):
+        self._alerts = alerts
+        self._index = index
+        self._render()
+        self.raise_()
+        self.show()
+
+    def _navigate(self, delta):
+        if not self._alerts:
+            return
+        self._index = (self._index + delta) % len(self._alerts)
+        self._render()
+
+    def _render(self):
+        alert = self._alerts[self._index]
+        self.title_label.setText(alert['event'].upper())
+
+        meta_bits = []
+        if alert.get('area'):
+            meta_bits.append(alert['area'])
+        times = []
+        if alert.get('effective'):
+            times.append('Effective {0:%a %-I:%M %p}'.format(alert['effective']))
+        if alert.get('expires'):
+            times.append('Until {0:%a %-I:%M %p}'.format(alert['expires']))
+        if times:
+            meta_bits.append(' | '.join(times))
+        badges = [b for b in (alert.get('severity'), alert.get('urgency'), alert.get('certainty')) if b]
+        if badges:
+            meta_bits.append(' · '.join(badges))
+        self.meta_label.setText('\n'.join(meta_bits))
+
+        body_parts = []
+        if alert.get('headline'):
+            body_parts.append(alert['headline'])
+        if alert.get('description'):
+            body_parts.append(alert['description'])
+        if alert.get('instruction'):
+            body_parts.append('WHAT TO DO:\n' + alert['instruction'])
+        if alert.get('sender'):
+            body_parts.append('Source: ' + alert['sender'])
+        self.text_edit.setPlainText('\n\n'.join(body_parts))
+        self.text_edit.verticalScrollBar().setValue(0)
+
+        multi = len(self._alerts) > 1
+        self.nav_prev.setVisible(multi)
+        self.nav_next.setVisible(multi)
+        self.page_label.setVisible(multi)
+        if multi:
+            self.page_label.setText('Alert {0} of {1}'.format(self._index + 1, len(self._alerts)))
+
+    def mousePressEvent(self, event):
+        # A tap that reaches here landed on the scrim itself, not the card
+        # (whose own _EventSink swallows clicks) - dismiss.
+        self.hide()
 
 
 class SlideShow(QtWidgets.QLabel):
@@ -2488,7 +2733,7 @@ def realquit():
 def myquit(signum, frame):
     global objradar1, objradar2, objradar3, objradar4
     global ctimer, wxtimer, temptimer, cursortimer, alerttimer
-    global sleep_inhibit_process
+    global sleep_inhibit_process, keepalive_timer
 
     objradar1.stop()
     objradar2.stop()
@@ -2501,6 +2746,9 @@ def myquit(signum, frame):
     alerttimer.stop()
     if Config.useslideshow:
         objimage1.stop()
+    if keepalive_timer is not None:
+        keepalive_timer.stop()
+        keepalive_timer = None
     if sleep_inhibit_process is not None:
         sleep_inhibit_process.terminate()
         sleep_inhibit_process = None
@@ -2566,6 +2814,9 @@ class MyMain(QtWidgets.QWidget):
                     foreGround.hide()
                 else:
                     foreGround.show()
+            if event.key() == Qt.Key.Key_Escape:
+                if alertDetailPanel.isVisible():
+                    alertDetailPanel.hide()
 
     def mousePressEvent(self, event):
         if isinstance(event, QtGui.QMouseEvent):
@@ -2748,6 +2999,7 @@ lastkeytime = 0
 lastapiget = time.time()
 last_brightness_percent = -1
 sleep_inhibit_process = None
+keepalive_timer = None
 
 # Pressure trend tracking: samples are recorded every time fresh weather data
 # arrives, but the displayed arrow only refreshes once an hour (see
@@ -3203,12 +3455,15 @@ shadow.setOffset(2, 2)                  # Offset for the shadow (x, y)
 bottom.setGraphicsEffect(shadow)
 
 # Severe weather warning bubble: below the clock, above the sunrise/set footer.
+# The detail panel is a direct child of w (like brightness_overlay) so it sits
+# on top of both frame1/frame2 and is reachable from either page.
+alertDetailPanel = AlertDetailPanel(w, width, height)
 alertrect = QtCore.QRect(
     int(width * 0.2),
     int(height * 0.855),
     int(width * 0.6),
     int(height * 0.075))
-alertBubble = AlertBubble(foreGround, alertrect)
+alertBubble = AlertBubble(foreGround, alertrect, alertDetailPanel)
 
 
 temp = QtWidgets.QLabel(foreGround)
