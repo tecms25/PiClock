@@ -40,6 +40,31 @@ Alternatively, you can download the zip file from GitHub
 by clicking the **< > Code** button above the list of files at [PiClock](../), 
 select **Download ZIP**, then unzip it onto your system.
 
+### Quick install (recommended)
+For a standard install (no GPIO buttons, IR remote, temperature sensors, or
+NeoPixel LEDs), an installer script will create the virtual environment,
+install the required Python packages, install the bundled Open Sans fonts
+from the `fonts` folder for the current user, set up `Clock/ApiKeys.py` and
+`Clock/Config.py` from the examples, and interactively prompt you for your
+location, API keys, map provider, slideshow, and NOAA alert settings.
+
+On Linux/macOS:
+```
+cd PiClock
+bash install.sh
+```
+On Windows (the interactive prompts require PowerShell, included by default
+on Windows 10/11):
+```
+cd PiClock
+install.bat
+```
+It's safe to run again later - it won't overwrite an existing
+`Clock/ApiKeys.py` or `Clock/Config.py` unless you explicitly opt back into
+the interactive prompts. If you skip the prompts (or need settings the
+installer doesn't ask about, like the radar map centers/markers), continue
+with the manual steps below.
+
 ### Configure the PiClock API keys
 
 You need to set API keys for one weather service and one map service.

@@ -85,6 +85,27 @@ git clone https://github.com/USERNAME/PiClock.git
 
 Once that is done, you'll have a new directory called PiClock.
 
+### Quick install (recommended)
+For a standard install - no GPIO buttons, IR remote, temperature sensors, or
+NeoPixel LEDs - an installer script can do the rest of this section for you:
+it creates the virtual environment, installs PyQt6 and the required Python
+packages (offering to use `apt` for `python3-pyqt6`/`mpg123` on Raspberry Pi
+OS), installs the bundled Open Sans fonts from the `fonts` folder for the
+current user, sets up `Clock/ApiKeys.py` and `Clock/Config.py` from the
+examples, and interactively prompts you for your location, API keys, map
+provider, slideshow, and NOAA alert settings.
+```
+cd PiClock
+bash install.sh
+```
+It's safe to run again later - it won't overwrite an existing
+`Clock/ApiKeys.py` or `Clock/Config.py` unless you explicitly opt back into
+the interactive prompts. If you skip the prompts (or need settings the
+installer doesn't ask about, like the radar map centers/markers), continue
+with the manual steps below. If you need the optional hardware add-ons (GPIO
+buttons, IR remote, temperature sensors, NeoPixel LEDs), follow the manual
+steps in this section instead.
+
 ### Create virtual environment
 Create a Python virtual environment in the PiClock directory for 
 installing the required Python packages and running PiClock.
