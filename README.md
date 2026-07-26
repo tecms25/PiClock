@@ -3,14 +3,28 @@ Fork of PiClock that uses custom maps from MapBox, for better contrast
 between the weather radar and the maps, with an additional map overlay so that 
 rain/snow clouds do not obscure map information, such as labels, borders, and roads.
 Also added is text shadows/borders for easier visibility. The original version can be hard to read with certain backgrounds.
-Several other UX and language updates have been added, along with the ability to specify remote images for a slideshow, 
-addition of NOAA weather warnings, and several codebase refactorings, including to PyQt6. Other smaller changes were made to 
-support more streamlined debugging, and enhance data caching to streamline API usages.
+Several other UX and language updates have been added, along with several codebase refactorings, including to PyQt6.
+Other smaller changes were made to support more streamlined debugging, and enhance data caching to streamline API usages.
 
 This PiClock fork has removed use of OpenWeatherMap in favor of Tomorrow.io. My experience with OWM
 was mediocre at best, and although Tomorrow.io supports fewer free API calls, I've found their
 forecasting to be better. Additional sources will be added if deemed accurate enough. The analog clock has also been removed. 
 The digital display looks much sleaker and I didn't intend to support it for my own purposes.
+
+### What this fork adds
+  * **Severe weather alerts** - a warning bar for active NOAA/NWS alerts, with
+    a scrolling headline; click or tap it for the full alert text and
+    instructions. See [Install.md](Documentation/Install.md#severe-weather-alerts).
+  * **Day/night screen brightness** - dims the display on a 24-hour schedule
+    you configure, with a gradual fade between day and night.
+  * **Always-on display** - best-effort suppression of the OS screensaver,
+    screen blanking, and sleep on Windows, macOS, and Linux (X11 and Wayland).
+  * **Slideshow from a web playlist** - point PiClock at a text file of image
+    URLs, with crossfade transitions between images.
+  * **Scripted install** - `install.sh` (Linux/macOS) and `install.bat`
+    (Windows) set up the virtualenv, packages, fonts, and config interactively.
+  * **Pressure trend arrow**, cursor auto-hide, a short-lived on-disk API cache,
+    and optional daily log rotation.
 
 ## Original PiClock (https://github.com/n0bel/PiClock)
 Thanks to N0BEL for the original codebase. I've been running a PiClock in one fashion or another for over a decade.

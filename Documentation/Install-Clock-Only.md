@@ -46,7 +46,10 @@ NeoPixel LEDs), an installer script will create the virtual environment,
 install the required Python packages, install the bundled Open Sans fonts
 from the `fonts` folder for the current user, set up `Clock/ApiKeys.py` and
 `Clock/Config.py` from the examples, and interactively prompt you for your
-location, API keys, map provider, slideshow, and NOAA alert settings.
+location, API keys, map provider (including custom Mapbox base/overlay
+styles), slideshow, NOAA alert, and day/night screen brightness settings.
+On a GNOME desktop it also offers to disable idle screen blanking, auto-lock,
+and auto-dim, so the clock stays visible.
 
 On Linux/macOS:
 ```
@@ -190,19 +193,27 @@ re-checked every 2 hours, and only images newly added to the list get downloaded
 (images removed from the list are deleted from the cache).
 
 #### Severe weather alerts
-PiClock can show a red warning bubble - below the clock, above the sunrise/set
+PiClock can show a red warning bar - below the clock, above the sunrise/set
 line - whenever there's an active NOAA/NWS alert for your location (severe
 thunderstorm watches/warnings, tornado warnings, flood warnings, etc.), using
 the free, no-signup-required [National Weather Service API](https://www.weather.gov/documentation/services-web-api).
 It's controlled by these Config.py settings:
   * `noaa_alerts_enabled` - 1 to enable, 0 to disable
   * `alert_refresh` - minutes between alert checks
-  * `alert_severities` - which NWS severity levels trigger the bubble (defaults
+  * `alert_severities` - which NWS severity levels trigger the bar (defaults
     to `('Severe', 'Extreme')`; other levels, least to most severe, are
     `'Unknown'`, `'Minor'`, `'Moderate'`)
 
-If multiple alerts are active at once, the bubble cycles through them one at a
-time. Unlike the weather/radar API calls, alert checks are never served from
+The bar shows the event name and expiry on its top line, with the affected
+area and the NWS headline scrolling underneath. If multiple alerts are active
+at once, it cycles through them one at a time and shows a "(1/2)" counter.
+
+Click or tap the bar to open the full alert: the complete NWS description,
+the "what to do" instructions, the affected area, timing, and severity. Use
+the arrows to page through other active alerts, and the close button, Escape,
+or a tap outside the card to dismiss it.
+
+Unlike the weather/radar API calls, alert checks are never served from
 `Clock/api_cache` - they always hit the live API, since a stale cached "no
 alerts" response could mask a genuinely new one.
 
@@ -221,10 +232,18 @@ needed. It's controlled by these Config.py settings:
 PiClock also tries, best-effort, to stop the OS from blanking or sleeping the
 display while it's running (handy since this is meant to be an always-on
 clock). This is controlled by `prevent_screen_sleep` (1 to enable, 0 to
-disable), and uses the native mechanism for your OS: `SetThreadExecutionState`
-on Windows, `caffeinate` on macOS, and `xset`/`systemd-inhibit` on Linux. Not
-every desktop environment honors these, so treat it as a best effort rather
-than a guarantee.
+disable), and uses the native mechanism for your OS:
+  * **Windows** - `SetThreadExecutionState` with `ES_DISPLAY_REQUIRED`
+  * **macOS** - a `caffeinate -d -i` process, plus a periodic `caffeinate -u`
+    that resets the separate idle timer the screensaver and lock screen use
+    (`-d -i` alone does not stop those)
+  * **Linux** - `xset` to disable X11 blanking/DPMS, plus a `systemd-inhibit`
+    idle/sleep lock that also covers Wayland
+
+Not every desktop environment honors these, so treat it as a best effort. On
+GNOME (including Raspberry Pi OS with GNOME), `install.sh` additionally offers
+to turn off idle blanking, auto-lock, and auto-dim via `gsettings`, which is
+the reliable fix there.
 
 ### Run it!
 
@@ -248,6 +267,9 @@ didn't need to call the API again.
 ### First Use
 
   * The space bar or right or left arrows will change the page.
+  * Clicking anywhere (other than an alert bar) will also change the page.
+  * Clicking or tapping the severe weather alert bar opens the full alert details.
+  * Escape closes the alert details panel.
   * F2 will start and stop the NOAA weather radio stream
   * F4 will close the clock
   * F6 will show the previous slideshow image

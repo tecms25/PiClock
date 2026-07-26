@@ -1,5 +1,6 @@
-# -*- coding: utf-8 -*-                 # NOQA
+# -*- coding: utf-8 -*-
 
+import atexit
 import datetime
 import hashlib
 import json
@@ -28,8 +29,8 @@ from PyQt6.QtNetwork import QNetworkRequest
 from tzfpy import get_tz
 
 sys.dont_write_bytecode = True
-from GoogleMercatorProjection import get_corners, get_point, get_tile_xy, LatLng  # NOQA
-import ApiKeys  # NOQA
+from GoogleMercatorProjection import get_corners, get_point, get_tile_xy, LatLng
+import ApiKeys
 
 
 def _qt_message_handler(msg_type, context, message):
@@ -236,7 +237,6 @@ def _setup_daily_log_if_enabled():
         logger = _DailyRotatingLineLogger(log_file, keep=7, tee_to=None)
         sys.stdout = logger
         sys.stderr = logger
-        import atexit
         atexit.register(logger.close)
     except Exception:
         # If anything goes wrong, fall back to normal stdout/stderr.
@@ -431,6 +431,23 @@ def _macos_declare_user_active():
           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
 
+def release_display_sleep():
+    """Stop the keep-awake helpers started by prevent_display_sleep().
+
+    Registered with atexit as well as being called from myquit(), because the
+    helper is a child process: if PiClock ever exits without going through
+    myquit() - an unhandled exception, or the window being closed - an
+    unreleased helper would outlive it and keep the display awake for good.
+    Safe to call more than once."""
+    global sleep_inhibit_process, keepalive_timer
+    if keepalive_timer is not None:
+        keepalive_timer.stop()
+        keepalive_timer = None
+    if sleep_inhibit_process is not None:
+        sleep_inhibit_process.terminate()
+        sleep_inhibit_process = None
+
+
 def prevent_display_sleep():
     """Best-effort: stop the OS from blanking/sleeping the display while the
     clock is running. Each platform uses its own native mechanism; failures
@@ -438,6 +455,7 @@ def prevent_display_sleep():
     global sleep_inhibit_process, keepalive_timer
     if not Config.prevent_screen_sleep:
         return
+    atexit.register(release_display_sleep)
     system = platform.system()
     try:
         if system == 'Windows':
@@ -682,14 +700,8 @@ def gettemp():
     tempreply.finished.connect(tempfinished)
 
 
-
-def getmost(a):
-    b = dict((i, a.count(i)) for i in a)  # list to key and counts
-    # print('INFO:', 'getmost', b)
-    c = sorted(b, key=b.get)  # sort by counts
-    return c[-1]  # get last (most counted) item
-
-
+# Tomorrow.io weather codes to display text. Overridden by Config.Ltm_code_map
+# (for other languages) on the first getallwx() call.
 tm_code_map = {
     0: 'Unknown',
     1000: 'Clear',
@@ -892,21 +904,14 @@ def wxfinished_tm_hourly(data=None):
         else:
             s += '%.0f' % (f['values']['temperature']) + u'°F '
 
-        # If precipitationProbality is greater than 0% but no accumulation show rain or snow with probability percentage.
-        # If no precip type or no precip forcated, show No Precipitation
-
+        # Precipitation expected but too little to accumulate: probability only.
         if pop >= 1 and ptype > 0:
             if ptype == 1 and raccum < 0.10 and saccum < 0.10:
                 s += Config.LRain + '%.0f' % pop + '%'
             elif ptype == 2 and saccum < 0.10 and raccum < 0.10:
                 s += Config.LSnow + '%.0f' % pop + '%'
-#        if pop >=1 and ptype == 0:
-#            s += 'No Precipitation'                
-#        if pop == 0:
-#            s += 'No Precipitation'
 
-        # Logic to show rain or snow probability, followed by projected accumulations in forecast
-
+        # Enough to accumulate: probability plus the projected amount.
         if Config.metric:
             if ptype == 2:
                 if saccum >= 0.10:
@@ -935,7 +940,7 @@ def wxfinished_tm_hourly(data=None):
                         s += Config.LSnow + '%.0f' % pop + '% ' + '\n' + 'Accumulation: ' + '%.2f' % saccum + ' in'
 
         wx.setStyleSheet('#wx { font-size: ' + str(int(17 * xscale * Config.fontmult)) + 'px; }')
-        if pop >=1 and (saccum >= 0.10 or raccum >= 0.10):
+        if pop >= 1 and (saccum >= 0.10 or raccum >= 0.10):
             wx.setText(tm_code_map[f['values']['weatherCode']] + '\n' + s)
         else:
             wx.setText('\n' + tm_code_map[f['values']['weatherCode']] + '\n' + s)
@@ -989,40 +994,6 @@ def wxfinished_tm_daily(data=None):
             ptype = float(f['values']['precipitationType'])
             saccum = float(f['values']['snowAccumulationAvg'])
             raccum = float(f['values']['rainAccumulationAvg'])
-            wc = tm_code_icons[f['values']['weatherCode']]
-
-            if '4000' in wc:
-                ptype = 'rain'
-            if '4001' in wc:
-                ptype = 'rain'
-            if '4200' in wc:
-                ptype = 'rain'
-            if '4201' in wc:
-                ptype = 'rain'
-            if '5000' in wc:
-                ptype = 'snow'
-            if '5001' in wc:
-                ptype = 'snow'
-            if '5100' in wc:
-                ptype = 'snow'
-            if '5101' in wc:
-                ptype = 'snow'
-            if '6000' in wc:
-                ptype = 'rain'
-            if '6001' in wc:
-                ptype = 'rain'
-            if '6200' in wc:
-                ptype = 'rain'
-            if '6201' in wc:
-                ptype = 'rain'
-            if '7000' in wc:
-                ptype = 'snow'
-            if '7101' in wc:
-                ptype = 'snow'
-            if '7102' in wc:
-                ptype = 'snow'
-            if '8000' in wc:
-                ptype = 'rain'
 
             if Config.metric:
                 s += '%.0f' % tempf2tempc(f['values']['temperatureMax']) + '/' + \
@@ -1031,17 +1002,14 @@ def wxfinished_tm_daily(data=None):
                 s += '%.0f' % f['values']['temperatureMax'] + '/' + \
                      '%.0f' % f['values']['temperatureMin'] + u'°F '
 
-            # If precipitationProbality is greater than 0% but no accumulation show rain or snow with probability percentage.
-            # If no precip type or no precip forcated, show No Precipitation
-
+            # Precipitation expected but too little to accumulate: probability only.
             if pop >= 1 and ptype > 0:
                 if ptype == 1 and raccum < 0.10 and saccum < 0.10:
                     s += Config.LRain + '%.0f' % pop + '%'
                 elif ptype == 2 and saccum < 0.10 and raccum < 0.10:
                     s += Config.LSnow + '%.0f' % pop + '%'
 
-            # Logic to show rain or snow probability, followed by projected accumulations in forecast
-
+            # Enough to accumulate: probability plus the projected amount.
             if Config.metric:
                 if ptype == 2:
                     if saccum >= 0.10:
@@ -1069,18 +1037,14 @@ def wxfinished_tm_daily(data=None):
                         if saccum >= 0.10:
                             s += Config.LSnow + '%.0f' % pop + '% ' + '\n' + 'Accumulation: ' + '%.2f' % saccum + ' in'
 
-
             wx.setStyleSheet('#wx { font-size: ' + str(int(17 * xscale * Config.fontmult)) + 'px; }')
             if pop >= 1 and (saccum >= 0.10 or raccum >= 0.10):
                 wx.setText(tm_code_map[f['values']['weatherCode']] + '\n' + s)
             else:
                 wx.setText('\n' + tm_code_map[f['values']['weatherCode']] + '\n' + s)
-            
-            
-
         except IndexError:
+            # Fewer forecast intervals than slots; leave the remaining ones as-is.
             print('WARNING:', traceback.format_exc())
-            pass
 
 
 metar_cond = [
@@ -1134,8 +1098,8 @@ metar_cond = [
     ('IC', '', '', 'Ice Crystals', 'snow', 13),
     ('PL', '', '', 'Ice Pellets', 'snow', 13),
 
-    ('GR', '', '+', 'Heavy Hail', 'thuderstorm', 14),
-    ('GR', '', '', 'Hail', 'thuderstorm', 14),
+    ('GR', '', '+', 'Heavy Hail', 'thunderstorm', 14),
+    ('GR', '', '', 'Hail', 'thunderstorm', 14),
 ]
 
 
@@ -1297,7 +1261,7 @@ def wxfinished_metar(data=None):
     humidity.setText(humidity_str)
     wind.setText(wind_speed_str)
     feelslike.setText(feelslike_str)
-    wdate.setText('0:%H:%M %Z} {1}'.format(dt, Config.METAR))
+    wdate.setText('{0:%H:%M %Z} {1}'.format(dt, Config.METAR))
 
 
 def record_pressure_sample(value_inhg):
@@ -1551,7 +1515,8 @@ def qtstart():
     objradar3.start(radar_refresh_interval)
     objradar4.start(radar_refresh_interval)
 
-    # Sy wxstart calls for radar objects 1 and 2
+    # Only page 1's radars animate at startup; radar3/4 start when that page
+    # is shown (see fixupframe()).
     objradar1.wxstart()
     objradar2.wxstart()
 
@@ -1612,10 +1577,11 @@ SLIDESHOW_PLAYLIST_REFRESH_SEC = 2 * 60 * 60  # re-check the web playlist for ch
 SLIDESHOW_IMAGE_EXTENSIONS = ('.jpg', '.jpeg', '.png', '.gif', '.bmp', '.webp')
 
 
-ALERT_CYCLE_MS = 6000  # how long each alert shows before cycling to the next, when more than one is active
+ALERT_CYCLE_MS = 12000  # how long each alert shows before cycling to the next, when more than one is active
 TICKER_PX_PER_TICK = 2  # ticker scroll speed
 TICKER_TICK_MS = 30
 TICKER_GAP_PX = 80  # blank gap between one loop of ticker text and the next
+TICKER_START_DELAY_MS = 2000  # hold new text still this long before it scrolls, so it's readable
 
 
 class _Ticker(QtWidgets.QWidget):
@@ -1629,6 +1595,7 @@ class _Ticker(QtWidgets.QWidget):
         self._label.setStyleSheet('background: transparent;')
         self._label.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
         self._x = 0
+        self._hold_ticks = 0
 
         self._timer = QtCore.QTimer(self)
         self._timer.timeout.connect(self._advance)
@@ -1640,6 +1607,8 @@ class _Ticker(QtWidgets.QWidget):
         self._label.adjustSize()
         self._label.setFixedHeight(max(self.height(), self._label.sizeHint().height()))
         self._x = 0
+        self._label.move(0, 0)
+        self._hold_ticks = int(TICKER_START_DELAY_MS / TICKER_TICK_MS)
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
@@ -1652,6 +1621,11 @@ class _Ticker(QtWidgets.QWidget):
         text_width = self._label.width()
         if text_width <= self.width():
             self._label.move(0, 0)
+            return
+        if self._hold_ticks > 0:
+            # Sitting still at the start of the text so it can be read before
+            # it starts moving.
+            self._hold_ticks -= 1
             return
         self._x -= TICKER_PX_PER_TICK
         if self._x < -(text_width + TICKER_GAP_PX):
@@ -1745,7 +1719,6 @@ class AlertBubble(QtWidgets.QFrame):
         self.title_label.setText(title)
 
         ticker_bits = [b for b in (alert.get('area'), alert.get('headline')) if b]
-        ticker_bits.append('Tap for full details')
         self.ticker.set_text('     •     '.join(ticker_bits), self._ticker_style)
 
     def mousePressEvent(self, event):
@@ -2124,10 +2097,7 @@ class SlideShow(QtWidgets.QLabel):
         self._download_next_pending()
 
     def play_pause(self):
-        if not self.pause:
-            self.pause = True
-        else:
-            self.pause = False
+        self.pause = not self.pause
 
     def prev_next(self, direction):
         self.img_inc = direction
@@ -2145,7 +2115,7 @@ radarMetadataReply = None
 
 
 def get_rainviewer_metadata():
-    """Fetch RainViewer metadata once globally, shared by all radar instances"""
+    """Fetch RainViewer metadata once globally, shared by all radar instances."""
     global manager, radarMetadataCache, radarMetadataReply
 
     # Check if the cache is still fresh (updated within the last 10 minutes)
@@ -2165,7 +2135,7 @@ def get_rainviewer_metadata():
 
 
 def rainviewer_metadata_finished(data=None):
-    """Process the RainViewer metadata response"""
+    """Process the RainViewer metadata response."""
     global radarMetadataCache, radarMetadataReply
 
     if data is None:
@@ -2184,7 +2154,6 @@ def rainviewer_metadata_finished(data=None):
         print('WARNING:', traceback.format_exc())
         print('WARNING: Response from api.rainviewer.com: ' + metadatastr)
         return
-
 
 
 class Radar(QtWidgets.QLabel):
@@ -2348,25 +2317,20 @@ class Radar(QtWidgets.QLabel):
         self.frameImages = newf
         firstt = t - self.anim * 600
         for tt in range(firstt, t + 1, 600):
-#            print('INFO: ' + self.myname + '... get radar tiles for time ' + str(tt) +
-#                  ' (' + str(datetime.datetime.fromtimestamp(tt).astimezone(tzlocal.get_localzone())) + ')')
+            if any(f['time'] == tt for f in self.frameImages):
+                continue  # already have this frame
             print(f'INFO: {self.myname} fetching radar tiles for time {tt} '
                   f'({datetime.datetime.fromtimestamp(tt).astimezone(tzlocal.get_localzone())})')
-            gotit = False
-            for f in self.frameImages:
-                if f['time'] == tt:
-                    gotit = True
-            if not gotit:
-#                self.get_tiles(tt)
-#                break
-                # Try to get tiles for this time, but continue to the next time if unavailable
-                if self.get_tiles(tt):
-                    break  # Successfully started fetching, stop loop to wait for async completion
+            # Tiles arrive asynchronously, so stop after queueing one frame;
+            # get_tilesreply() calls back here for the next one. A frame with
+            # no data available returns False, so just try the next timestamp.
+            if self.get_tiles(tt):
+                break
 
     def get_tiles(self, t, i=0):
-        """Build tile URLs from metadata and fetch them
+        """Build tile URLs from metadata and fetch them.
 
-        Returns True if tiles were successfully queued for fetching, False if unavailable
+        Returns True if tiles were queued, False if no data exists for this time.
         """
         t = int(t / 600) * 600
         self.getTime = t
@@ -2402,9 +2366,10 @@ class Radar(QtWidgets.QLabel):
         return True  # Successfully queued for fetching
 
     def find_radar_path_for_time(self, timestamp):
-        """Find the radar path from metadata that matches the requested timestamp
+        """Find the metadata radar path closest to the requested timestamp.
 
-        Since the API provides 10-minute interval frames, find the closest available frame
+        RainViewer publishes frames on a 10-minute grid, so an exact match is
+        not guaranteed; anything within 5 minutes is accepted.
         """
         if not radarMetadataCache['data'] or 'radar' not in radarMetadataCache['data']:
             return None
@@ -2441,7 +2406,7 @@ class Radar(QtWidgets.QLabel):
         return None
 
     def get_tilesreply(self, data=None):
-        """Process the radar tile response"""
+        """Process the radar tile response."""
         if data is None:
             self.tilereply.deleteLater()
             data = bytes(self.tilereply.readAll())
@@ -2463,8 +2428,7 @@ class Radar(QtWidgets.QLabel):
             self.get()
 
     def combine_tiles(self):
-        # create weather radar image
-        """Combine the radar tiles into a single image"""
+        """Combine the fetched radar tiles into one image, plus a timestamp layer."""
         ii = QImage(self.tilesWidth * 256, self.tilesHeight * 256, QImage.Format.Format_ARGB32)
         ii.fill(Qt.GlobalColor.transparent)
         painter = QPainter()
@@ -2695,7 +2659,7 @@ class Radar(QtWidgets.QLabel):
             self.overlayreply.finished.connect(self.overlayfinished)
 
     def start(self, interval=0):
-        """Start the radar display with an optional interval override"""
+        """Start the radar display, with an optional refresh interval override."""
         if interval > 0:
             self.interval = interval
         self.getbase()
@@ -2711,7 +2675,7 @@ class Radar(QtWidgets.QLabel):
 
     def wxstart(self):
         print('INFO: wxstart for ' + self.myname)
-        self.timer.start(200)
+        self.timer.start(self.TICK_MS)
 
     def wxstop(self):
         print('INFO: wxstop for ' + self.myname)
@@ -2733,7 +2697,6 @@ def realquit():
 def myquit(signum, frame):
     global objradar1, objradar2, objradar3, objradar4
     global ctimer, wxtimer, temptimer, cursortimer, alerttimer
-    global sleep_inhibit_process, keepalive_timer
 
     objradar1.stop()
     objradar2.stop()
@@ -2746,24 +2709,18 @@ def myquit(signum, frame):
     alerttimer.stop()
     if Config.useslideshow:
         objimage1.stop()
-    if keepalive_timer is not None:
-        keepalive_timer.stop()
-        keepalive_timer = None
-    if sleep_inhibit_process is not None:
-        sleep_inhibit_process.terminate()
-        sleep_inhibit_process = None
+    release_display_sleep()
 
     QtCore.QTimer.singleShot(30, realquit)
 
 
 def fixupframe(frame, onoff):
+    """Animate a page's radars only while that page is visible."""
     for child in frame.children():
         if isinstance(child, Radar):
             if onoff:
-                # print('INFO: calling wxstart on radar on', frame.objectName())
                 child.wxstart()
             else:
-                # print('INFO: calling wxstop on radar on', frame.objectName())
                 child.wxstop()
 
 
@@ -2785,7 +2742,6 @@ class MyMain(QtWidgets.QWidget):
     def keyPressEvent(self, event):
         global weatherplayer, lastkeytime
         if isinstance(event, QtGui.QKeyEvent):
-            # print('INFO:', event.key(), format(event.key(), '08x'))
             if event.key() == Qt.Key.Key_F4:
                 myquit(signal.SIGINT, None)
             if event.key() == Qt.Key.Key_F2:
@@ -2996,7 +2952,6 @@ pdy = ''
 lasttimestr = ''
 weatherplayer = None
 lastkeytime = 0
-lastapiget = time.time()
 last_brightness_percent = -1
 sleep_inhibit_process = None
 keepalive_timer = None
@@ -3031,6 +2986,18 @@ if platform.system() == 'Darwin':
 
 signal.signal(signal.SIGINT, myquit)
 signal.signal(signal.SIGTERM, myquit)
+
+
+def add_text_shadow(widget):
+    """Give a label a soft black drop shadow, so light text stays readable
+    against a bright slideshow image. A widget holds only one graphics
+    effect, so this replaces any previously set effect."""
+    shadow = QtWidgets.QGraphicsDropShadowEffect(widget)
+    shadow.setColor(QtGui.QColor(0, 0, 0))
+    shadow.setBlurRadius(10)
+    shadow.setOffset(2, 2)
+    widget.setGraphicsEffect(shadow)
+
 
 w = MyMain()
 w.setWindowTitle(os.path.basename(__file__))
@@ -3085,7 +3052,6 @@ clockrect = QtCore.QRect(
     int(height * .8),
     int(height * .8))
 clockface.setGeometry(clockrect)
-dcolor = QColor(Config.digitalcolor).darker(0).name()
 lcolor = QColor(Config.digitalcolor).lighter(120).name()
 clockface.setStyleSheet(
     '#clockface { background-color: transparent; font-family:"Open Sans";' +
@@ -3098,22 +3064,7 @@ clockface.setStyleSheet(
     '}')
 clockface.setAlignment(Qt.AlignmentFlag.AlignCenter)
 clockface.setGeometry(clockrect)
-glow = QtWidgets.QGraphicsDropShadowEffect()
-glow.setOffset(0)
-glow.setBlurRadius(50)
-glow.setColor(QColor(dcolor))
-clockface.setGraphicsEffect(glow)
-
-# Create a drop shadow effect
-shadow = QtWidgets.QGraphicsDropShadowEffect(clockface)
-shadow.setColor(QtGui.QColor(0, 0, 0))  # Black shadow
-shadow.setBlurRadius(10)                # Blur for smooth edges
-shadow.setOffset(2, 2)                  # Offset for the shadow (x, y)
-
-# Apply the shadow effect to the label
-clockface.setGraphicsEffect(shadow)
-
-
+add_text_shadow(clockface)
 
 radar1rect = QtCore.QRect(int(3 * xscale), int(344 * yscale), int(300 * xscale), int(275 * yscale))
 objradar1 = Radar(foreGround, Config.radar1, radar1rect, 'radar1')
@@ -3139,14 +3090,7 @@ datex.setStyleSheet('#datex { font-family:"Open Sans"; color: ' +
 datex.setAlignment(Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignTop)
 datex.setGeometry(0, mac_notch_inset, width, int(100 * yscale))
 
-# Create a drop shadow effect
-shadow = QtWidgets.QGraphicsDropShadowEffect(datex)
-shadow.setColor(QtGui.QColor(0, 0, 0))  # Black shadow
-shadow.setBlurRadius(10)                # Blur for smooth edges
-shadow.setOffset(2, 2)                  # Offset for the shadow (x, y)
-
-# Apply the shadow effect to the label
-datex.setGraphicsEffect(shadow)
+add_text_shadow(datex)
 
 
 datex2 = QtWidgets.QLabel(frame2)
@@ -3160,14 +3104,7 @@ datex2.setStyleSheet('#datex2 { font-family:"Open Sans"; color: ' +
 datex2.setAlignment(Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignTop)
 datex2.setGeometry(int(800 * xscale), int(760 * yscale), int(640 * xscale), 100)
 
-# Create a drop shadow effect
-shadow = QtWidgets.QGraphicsDropShadowEffect(datex2)
-shadow.setColor(QtGui.QColor(0, 0, 0))  # Black shadow
-shadow.setBlurRadius(10)                # Blur for smooth edges
-shadow.setOffset(2, 2)                  # Offset for the shadow (x, y)
-
-# Apply the shadow effect to the label
-datex2.setGraphicsEffect(shadow)
+add_text_shadow(datex2)
 
 
 datey2 = QtWidgets.QLabel(frame2)
@@ -3182,14 +3119,7 @@ datey2.setStyleSheet('#datey2 { font-family:"Open Sans"; color: ' +
 datey2.setAlignment(Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignTop)
 datey2.setGeometry(int(800 * xscale), int(820 * yscale), int(640 * xscale), 100)
 
-# Create a drop shadow effect
-shadow = QtWidgets.QGraphicsDropShadowEffect(datey2)
-shadow.setColor(QtGui.QColor(0, 0, 0))  # Black shadow
-shadow.setBlurRadius(10)                # Blur for smooth edges
-shadow.setOffset(2, 2)                  # Offset for the shadow (x, y)
-
-# Apply the shadow effect to the label
-datey2.setGraphicsEffect(shadow)
+add_text_shadow(datey2)
 
 
 ypos = -10
@@ -3242,14 +3172,7 @@ wxdesc.setStyleSheet('#wxdesc { background-color: transparent; color: ' +
 wxdesc.setAlignment(Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignTop)
 wxdesc.setGeometry(int(3 * xscale), int(ypos * yscale), int(300 * xscale), 100)
 
-# Create a drop shadow effect
-shadow = QtWidgets.QGraphicsDropShadowEffect(wxdesc)
-shadow.setColor(QtGui.QColor(0, 0, 0))  # Black shadow
-shadow.setBlurRadius(10)                # Blur for smooth edges
-shadow.setOffset(2, 2)                  # Offset for the shadow (x, y)
-
-# Apply the shadow effect to the label
-wxdesc.setGraphicsEffect(shadow)
+add_text_shadow(wxdesc)
 
 
 wxdesc2 = QtWidgets.QLabel(frame2)
@@ -3264,14 +3187,7 @@ wxdesc2.setStyleSheet('#wxdesc2 { background-color: transparent; color: ' +
 wxdesc2.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop)
 wxdesc2.setGeometry(int(400 * xscale), int(800 * yscale), int(400 * xscale), 100)
 
-# Create a drop shadow effect
-shadow = QtWidgets.QGraphicsDropShadowEffect(wxdesc2)
-shadow.setColor(QtGui.QColor(0, 0, 0))  # Black shadow
-shadow.setBlurRadius(10)                # Blur for smooth edges
-shadow.setOffset(2, 2)                  # Offset for the shadow (x, y)
-
-# Apply the shadow effect to the label
-wxdesc2.setGraphicsEffect(shadow)
+add_text_shadow(wxdesc2)
 
 ypos += 33
 temper = QtWidgets.QLabel(foreGround)
@@ -3286,14 +3202,7 @@ temper.setStyleSheet('#temper { background-color: transparent; color: ' +
 temper.setAlignment(Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignTop)
 temper.setGeometry(int(3 * xscale), int(ypos * yscale), int(300 * xscale), int(100 * yscale))
 
-# Create a drop shadow effect
-shadow = QtWidgets.QGraphicsDropShadowEffect(temper)
-shadow.setColor(QtGui.QColor(0, 0, 0))  # Black shadow
-shadow.setBlurRadius(10)                # Blur for smooth edges
-shadow.setOffset(2, 2)                  # Offset for the shadow (x, y)
-
-# Apply the shadow effect to the label
-temper.setGraphicsEffect(shadow)
+add_text_shadow(temper)
 
 
 temper2 = QtWidgets.QLabel(frame2)
@@ -3308,14 +3217,7 @@ temper2.setStyleSheet('#temper2 { background-color: transparent; color: ' +
 temper2.setAlignment(Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignTop)
 temper2.setGeometry(int(125 * xscale), int(780 * yscale), int(300 * xscale), 100)
 
-# Create a drop shadow effect
-shadow = QtWidgets.QGraphicsDropShadowEffect(temper2)
-shadow.setColor(QtGui.QColor(0, 0, 0))  # Black shadow
-shadow.setBlurRadius(10)                # Blur for smooth edges
-shadow.setOffset(2, 2)                  # Offset for the shadow (x, y)
-
-# Apply the shadow effect to the label
-temper2.setGraphicsEffect(shadow)
+add_text_shadow(temper2)
 
 
 ypos += 61
@@ -3331,14 +3233,7 @@ feelslike.setStyleSheet('#feelslike { background-color: transparent; color: ' +
 feelslike.setAlignment(Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignTop)
 feelslike.setGeometry(int(3 * xscale), int(ypos * yscale), int(300 * xscale), 100)
 
-# Create a drop shadow effect
-shadow = QtWidgets.QGraphicsDropShadowEffect(feelslike)
-shadow.setColor(QtGui.QColor(0, 0, 0))  # Black shadow
-shadow.setBlurRadius(10)                # Blur for smooth edges
-shadow.setOffset(2, 2)                  # Offset for the shadow (x, y)
-
-# Apply the shadow effect to the label
-feelslike.setGraphicsEffect(shadow)
+add_text_shadow(feelslike)
 
 
 ypos += 35
@@ -3354,14 +3249,7 @@ humidity.setStyleSheet('#humidity { background-color: transparent; color: ' +
 humidity.setAlignment(Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignTop)
 humidity.setGeometry(int(3 * xscale), int(ypos * yscale), int(300 * xscale), 100)
 
-# Create a drop shadow effect
-shadow = QtWidgets.QGraphicsDropShadowEffect(humidity)
-shadow.setColor(QtGui.QColor(0, 0, 0))  # Black shadow
-shadow.setBlurRadius(10)                # Blur for smooth edges
-shadow.setOffset(2, 2)                  # Offset for the shadow (x, y)
-
-# Apply the shadow effect to the label
-humidity.setGraphicsEffect(shadow)
+add_text_shadow(humidity)
 
 
 ypos += 22
@@ -3377,14 +3265,7 @@ press.setStyleSheet('#press { background-color: transparent; color: ' +
 press.setAlignment(Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignTop)
 press.setGeometry(int(3 * xscale), int(ypos * yscale), int(300 * xscale), 100)
 
-# Create a drop shadow effect
-shadow = QtWidgets.QGraphicsDropShadowEffect(press)
-shadow.setColor(QtGui.QColor(0, 0, 0))  # Black shadow
-shadow.setBlurRadius(10)                # Blur for smooth edges
-shadow.setOffset(2, 2)                  # Offset for the shadow (x, y)
-
-# Apply the shadow effect to the label
-press.setGraphicsEffect(shadow)
+add_text_shadow(press)
 
 
 ypos += 22
@@ -3400,14 +3281,7 @@ wind.setStyleSheet('#wind { background-color: transparent; color: ' +
 wind.setAlignment(Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignTop)
 wind.setGeometry(int(3 * xscale), int(ypos * yscale), int(300 * xscale), 100)
 
-# Create a drop shadow effect
-shadow = QtWidgets.QGraphicsDropShadowEffect(wind)
-shadow.setColor(QtGui.QColor(0, 0, 0))  # Black shadow
-shadow.setBlurRadius(10)                # Blur for smooth edges
-shadow.setOffset(2, 2)                  # Offset for the shadow (x, y)
-
-# Apply the shadow effect to the label
-wind.setGraphicsEffect(shadow)
+add_text_shadow(wind)
 
 
 ypos += 25
@@ -3423,14 +3297,7 @@ wdate.setStyleSheet('#wdate { background-color: transparent; color: ' +
 wdate.setAlignment(Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignTop)
 wdate.setGeometry(int(3 * xscale), int(ypos * yscale), int(300 * xscale), 100)
 
-# Create a drop shadow effect
-shadow = QtWidgets.QGraphicsDropShadowEffect(wdate)
-shadow.setColor(QtGui.QColor(0, 0, 0))  # Black shadow
-shadow.setBlurRadius(10)                # Blur for smooth edges
-shadow.setOffset(2, 2)                  # Offset for the shadow (x, y)
-
-# Apply the shadow effect to the label
-wdate.setGraphicsEffect(shadow)
+add_text_shadow(wdate)
 
 
 bottom = QtWidgets.QLabel(foreGround)
@@ -3445,14 +3312,7 @@ bottom.setStyleSheet('#bottom { font-family:"Open Sans"; color: ' +
 bottom.setAlignment(Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignTop)
 bottom.setGeometry(0, int(height - 50 * yscale), width, int(50 * yscale))
 
-# Create a drop shadow effect
-shadow = QtWidgets.QGraphicsDropShadowEffect(bottom)
-shadow.setColor(QtGui.QColor(0, 0, 0))  # Black shadow
-shadow.setBlurRadius(10)                # Blur for smooth edges
-shadow.setOffset(2, 2)                  # Offset for the shadow (x, y)
-
-# Apply the shadow effect to the label
-bottom.setGraphicsEffect(shadow)
+add_text_shadow(bottom)
 
 # Severe weather warning bubble: below the clock, above the sunrise/set footer.
 # The detail panel is a direct child of w (like brightness_overlay) so it sits
@@ -3477,15 +3337,12 @@ temp.setStyleSheet('#temp { font-family:"Open Sans"; color: ' +
                    '}')
 temp.setAlignment(Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignTop)
 temp.setGeometry(0, int(height - 100 * yscale), width, int(50 * yscale))
+# Full-width and usually empty (it only fills in when the optional temperature
+# server is running), so without this it silently swallows every click along
+# the bottom of the screen.
+temp.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
 
-# Create a drop shadow effect
-shadow = QtWidgets.QGraphicsDropShadowEffect(temp)
-shadow.setColor(QtGui.QColor(0, 0, 0))  # Black shadow
-shadow.setBlurRadius(10)                # Blur for smooth edges
-shadow.setOffset(2, 2)                  # Offset for the shadow (x, y)
-
-# Apply the shadow effect to the label
-temp.setGraphicsEffect(shadow)
+add_text_shadow(temp)
 
 
 tzlatlng = pytz.utc
@@ -3505,12 +3362,7 @@ for i in range(0, 9):
 
     lab.setGeometry(int(1137 * xscale), int(i * 100 * yscale), int(300 * xscale), int(100 * yscale))
 
-    # Apply shadow to the main label
-    shadow = QtWidgets.QGraphicsDropShadowEffect(lab)
-    shadow.setColor(QtGui.QColor(0, 0, 0))  # Black shadow
-    shadow.setBlurRadius(10)                # Smooth edges
-    shadow.setOffset(2, 2)                  # Shadow offset
-    lab.setGraphicsEffect(shadow)
+    add_text_shadow(lab)
 
     icon = QtWidgets.QLabel(lab)
     icon.setStyleSheet('#icon { background-color: transparent; }')
@@ -3524,12 +3376,7 @@ for i in range(0, 9):
     wx.setWordWrap(True)
     wx.setObjectName('wx')
 
-    # Apply shadow to the weather description label
-    shadow_wx = QtWidgets.QGraphicsDropShadowEffect(wx)
-    shadow_wx.setColor(QtGui.QColor(0, 0, 0))
-    shadow_wx.setBlurRadius(10)
-    shadow_wx.setOffset(2, 2)
-    wx.setGraphicsEffect(shadow_wx)
+    add_text_shadow(wx)
 
     day = QtWidgets.QLabel(lab)
     day.setStyleSheet('#day { background-color: transparent; }')
@@ -3537,15 +3384,14 @@ for i in range(0, 9):
     day.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignBottom)
     day.setObjectName('day')
 
-    # Apply shadow to the day label
-    shadow_day = QtWidgets.QGraphicsDropShadowEffect(day)
-    shadow_day.setColor(QtGui.QColor(0, 0, 0))
-    shadow_day.setBlurRadius(10)
-    shadow_day.setOffset(2, 2)
-    day.setGraphicsEffect(shadow_day)
+    add_text_shadow(day)
 
     forecast.append(lab)
 
+# The alert bar is the only clickable thing on this page, so it has to sit
+# above the display-only labels created after it - otherwise they win
+# hit-testing and only the part of the bar they don't cover responds to taps.
+alertBubble.raise_()
 
 manager = QtNetwork.QNetworkAccessManager()
 
