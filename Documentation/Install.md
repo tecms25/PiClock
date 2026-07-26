@@ -527,6 +527,9 @@ Give each number a name, like is shown in the examples in that file
 At this point the clock will only start when you manually start it, as
 described in the Run It section.
 
+`install.sh` offers to do Method 1 for you, including the "Allow Launching"
+step below. These are the manual equivalents.
+
 Use only one autostart method.
 #### Autostart Method 1
 (NOT as root)
@@ -539,6 +542,17 @@ ln PiClock.desktop ~/.config/autostart
 ```
 This puts the PiClock icon on your desktop.  It also runs it when
 the desktop starts.
+
+On GNOME 42 and newer (Ubuntu 22.04+, and Raspberry Pi OS with GNOME) a
+desktop shortcut is ignored until it is marked trusted - the icon shows as
+"Untrusted application launcher" and does nothing when double-clicked. Mark
+it trusted with:
+```
+chmod +x ~/Desktop/PiClock.desktop
+gio set ~/Desktop/PiClock.desktop metadata::trusted true
+```
+Alternatively, right-click the icon and choose "Allow Launching". Neither is
+needed for the `~/.config/autostart` copy, which runs regardless.
 
 #### Autostart Method 2
 To have it auto start on boot you need to do one more thing, edit the

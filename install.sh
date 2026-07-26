@@ -339,12 +339,34 @@ chmod +x startup.sh switcher.sh update.sh PiClock.desktop 2>/dev/null || true
 
 if [ "$OS_NAME" = "Linux" ] && [ -n "$XDG_CURRENT_DESKTOP$DISPLAY" ]; then
   echo ""
-  read -r -p "Set up PiClock to auto start on login/reboot? [y/N] " REPLY
+  read -r -p "Set up the desktop icon and auto start on login/reboot? [y/N] " REPLY
   if [ "$REPLY" = "y" ] || [ "$REPLY" = "Y" ]; then
     mkdir -p "$HOME/Desktop" "$HOME/.config/autostart"
-    ln -f PiClock.desktop "$HOME/Desktop/PiClock.desktop"
-    ln -f PiClock.desktop "$HOME/.config/autostart/PiClock.desktop"
-    echo "PiClock.desktop linked to ~/Desktop and ~/.config/autostart"
+    DESKTOP_SHORTCUT="$HOME/Desktop/PiClock.desktop"
+    AUTOSTART_SHORTCUT="$HOME/.config/autostart/PiClock.desktop"
+
+    # Prefer a hard link (edits to PiClock.desktop then apply everywhere), but
+    # that fails when ~/Desktop is on another filesystem, so fall back to a copy.
+    ln -f PiClock.desktop "$DESKTOP_SHORTCUT" 2>/dev/null || cp -f PiClock.desktop "$DESKTOP_SHORTCUT"
+    ln -f PiClock.desktop "$AUTOSTART_SHORTCUT" 2>/dev/null || cp -f PiClock.desktop "$AUTOSTART_SHORTCUT"
+    chmod +x "$DESKTOP_SHORTCUT" "$AUTOSTART_SHORTCUT" 2>/dev/null || true
+    echo "PiClock.desktop installed to ~/Desktop and ~/.config/autostart"
+
+    # GNOME 42+ (Ubuntu 22.04 and newer, Raspberry Pi OS with GNOME) refuses to
+    # launch a desktop shortcut until it is both executable and marked trusted;
+    # without this the icon shows as "Untrusted application launcher".
+    if command -v gio >/dev/null 2>&1; then
+      if gio set "$DESKTOP_SHORTCUT" metadata::trusted true 2>/dev/null; then
+        echo "Desktop shortcut marked trusted."
+      else
+        echo "NOTE: could not mark the desktop shortcut trusted (not supported here)."
+        echo "      If the icon shows as untrusted, right-click it and choose"
+        echo "      'Allow Launching'."
+      fi
+    else
+      echo "NOTE: 'gio' not found, so the desktop shortcut was not marked trusted."
+      echo "      On GNOME, right-click the icon and choose 'Allow Launching'."
+    fi
   fi
 
   configure_gnome_idle
