@@ -1,0 +1,45 @@
+# Line ending rules.
+#
+# This repo inherited a mix of LF and CRLF files, which made editors and
+# scripts silently flip a whole file and produce diffs where nothing actually
+# changed. Git now stores every text file with LF and converts on checkout per
+# the rules below, so those phantom diffs stop happening.
+
+# Detect text vs binary automatically; the rules below override where it matters.
+* text=auto
+
+# Anything that runs on the Pi must be LF. A shell script with CRLF fails at
+# startup with "bad interpreter: /bin/bash^M".
+*.sh        text eol=lf
+*.py        text eol=lf
+*.pl        text eol=lf
+*.c         text eol=lf
+*.inc       text eol=lf
+*.conf      text eol=lf
+*.desktop   text eol=lf
+Button/Makefile     text eol=lf
+Button/gpio-keys    text eol=lf
+
+# Docs and data.
+*.md        text eol=lf
+*.txt       text eol=lf
+*.yml       text eol=lf
+LICENSE     text eol=lf
+.gitignore  text eol=lf
+.gitattributes text eol=lf
+
+# Windows-only scripts keep CRLF: batch files can misparse labels with LF.
+*.bat       text eol=crlf
+*.ps1       text eol=crlf
+
+# Binaries - never convert, never diff.
+*.png   binary
+*.jpg   binary
+*.jpeg  binary
+*.gif   binary
+*.bmp   binary
+*.webp  binary
+*.ttf   binary
+*.xcf   binary
+*.pdf   binary
+*.sch   binary
