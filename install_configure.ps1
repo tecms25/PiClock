@@ -103,6 +103,7 @@ if (-not $useSlideshow) {
     Set-PyLine -Path $ConfigPath -Pattern '^useslideshow *=' -Replacement "useslideshow = 1  # 1 to enable, 0 to disable"
     Write-Host "1) Local images from PiClock\Pictures\Slideshow"
     Write-Host "2) Web playlist (a URL to a text file listing one image URL per line)"
+    Write-Host "3) Shared iCloud album"
     $slideChoice = Read-Host "Choose a slideshow source [1]"
     if ([string]::IsNullOrWhiteSpace($slideChoice)) { $slideChoice = '1' }
     if ($slideChoice -eq '2') {
@@ -111,6 +112,20 @@ if (-not $useSlideshow) {
         if ($slideUrl) {
             Set-PyLine -Path $ConfigPath -Pattern '^slideshow_url *=' -Replacement "slideshow_url = $(PyStr $slideUrl) # must be text file, one image url per line"
         }
+    } elseif ($slideChoice -eq '3') {
+        Set-PyLine -Path $ConfigPath -Pattern '^web_slideshow_playlist *=' -Replacement "web_slideshow_playlist = 2"
+        Write-Host "In Photos: create an album, share it, turn on 'Public Website', and copy the link."
+        Write-Host "Anyone with that link can view the album, so don't use it for private photos."
+        do {
+            $icloudAlbum = Read-Host "Shared iCloud album link (blank to skip)"
+            if (-not $icloudAlbum) { break }
+            if ($icloudAlbum -match '#.+') {
+                Set-PyLine -Path $ConfigPath -Pattern '^slideshow_icloud_album *=' -Replacement "slideshow_icloud_album = $(PyStr $icloudAlbum)"
+                break
+            }
+            Write-Host "That doesn't look like a share link. Expected something like"
+            Write-Host "  https://www.icloud.com/sharedalbum/#B0Xabc123"
+        } while ($true)
     } else {
         Set-PyLine -Path $ConfigPath -Pattern '^web_slideshow_playlist *=' -Replacement "web_slideshow_playlist = 0"
     }

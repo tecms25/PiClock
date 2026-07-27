@@ -35,7 +35,7 @@ py_quote() {
 configure_piclock() {
   local CFG="Clock/Config.py"
   local KEYS="Clock/ApiKeys.py"
-  local REPLY LAT LON TMAPI MAPCHOICE MBAPI GOOGLEAPI NOAASTREAM SLIDECHOICE SLIDEURL
+  local REPLY LAT LON TMAPI MAPCHOICE MBAPI GOOGLEAPI NOAASTREAM SLIDECHOICE SLIDEURL ICLOUDALBUM
   local MAPBASE MAPOVERLAY
   local DIM_ENABLE DAYBRIGHT NIGHTBRIGHT DAYSTART NIGHTSTART TRANSMIN KEEPAWAKE
 
@@ -119,6 +119,7 @@ configure_piclock() {
     set_py_line "$CFG" '^useslideshow *=' "useslideshow = 1  # 1 to enable, 0 to disable"
     echo "1) Local images from PiClock/Pictures/Slideshow"
     echo "2) Web playlist (a URL to a text file listing one image URL per line)"
+    echo "3) Shared iCloud album"
     read -r -p "Choose a slideshow source [1]: " SLIDECHOICE
     SLIDECHOICE=${SLIDECHOICE:-1}
     if [ "$SLIDECHOICE" = "2" ]; then
@@ -127,6 +128,24 @@ configure_piclock() {
       if [ -n "$SLIDEURL" ]; then
         set_py_line "$CFG" '^slideshow_url *=' "slideshow_url = $(py_quote "$SLIDEURL") # must be text file, one image url per line"
       fi
+    elif [ "$SLIDECHOICE" = "3" ]; then
+      set_py_line "$CFG" '^web_slideshow_playlist *=' "web_slideshow_playlist = 2"
+      echo "In Photos: create an album, share it, turn on 'Public Website', and copy the link."
+      echo "Anyone with that link can view the album, so don't use it for private photos."
+      while true; do
+        read -r -p "Shared iCloud album link: " ICLOUDALBUM
+        [ -z "$ICLOUDALBUM" ] && break
+        case "$ICLOUDALBUM" in
+          *sharedalbum*\#?*|\#?*)
+            set_py_line "$CFG" '^slideshow_icloud_album *=' "slideshow_icloud_album = $(py_quote "$ICLOUDALBUM")"
+            break
+            ;;
+          *)
+            echo "That doesn't look like a share link. Expected something like"
+            echo "  https://www.icloud.com/sharedalbum/#B0Xabc123"
+            ;;
+        esac
+      done
     else
       set_py_line "$CFG" '^web_slideshow_playlist *=' "web_slideshow_playlist = 0"
     fi

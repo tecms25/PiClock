@@ -53,8 +53,18 @@ slide_transition_ms = 1000  # crossfade duration between images, in milliseconds
 # 1 = images listed (one URL per line) in slideshow_url below; the cache is
 #     cleared and everything re-downloaded on every launch, then the list is
 #     re-checked every 2 hours and only images new to the list are downloaded
+# 2 = photos from a shared iCloud album (slideshow_icloud_album below); the
+#     cache is kept between launches and only added/removed photos are synced,
+#     re-checked every 2 hours
 web_slideshow_playlist = 0
 slideshow_url = 'https://example.com/slideshow.txt' # must be text file, one image url per line
+# Shared iCloud album, used when web_slideshow_playlist = 2.
+# In Photos, create an album, share it, turn on "Public Website", then copy the
+# link here. Anything you add to that album from any Apple device shows up on
+# the clock at the next refresh.
+# NOTE: a public website album is readable by anyone who has the link, so don't
+# put anything private in it.
+slideshow_icloud_album = ''  # e.g. 'https://www.icloud.com/sharedalbum/#B0Xabc123'
 
 # Digital clock
 digitalcolor = '#FFFFFF' #Color of the text

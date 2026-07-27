@@ -178,8 +178,10 @@ by these Config.py settings:
   * `slide_time` - seconds between image changes
   * `slide_bg_color` - background color shown behind images that don't fill the screen
   * `slide_transition_ms` - crossfade duration between images, in milliseconds; 0 for an instant hard cut
-  * `web_slideshow_playlist` - 0 for your own local images, 1 for a web playlist (see below)
+  * `web_slideshow_playlist` - 0 for your own local images, 1 for a web playlist,
+    2 for a shared iCloud album (all described below)
   * `slideshow_url` - only used when `web_slideshow_playlist = 1`
+  * `slideshow_icloud_album` - only used when `web_slideshow_playlist = 2`
 
 With `web_slideshow_playlist = 0`, drop your own images (`.jpg`, `.jpeg`, `.png`,
 `.gif`, `.bmp`, `.webp`) into `PiClock/Pictures/Slideshow` and PiClock shows them
@@ -191,6 +193,28 @@ and caches them in `PiClock/Clock/slideshow_cache`. The cache is cleared and
 everything re-downloaded fresh on every launch; while running, the list is
 re-checked every 2 hours, and only images newly added to the list get downloaded
 (images removed from the list are deleted from the cache).
+
+With `web_slideshow_playlist = 2`, PiClock pulls photos from a shared iCloud
+album, so anything you add to that album from an iPhone, iPad, or Mac appears
+on the clock at the next refresh. To set it up, in Photos create an album,
+share it, turn on **Public Website**, and copy the link into
+`slideshow_icloud_album` - it looks like
+`https://www.icloud.com/sharedalbum/#B0Xabc123`.
+
+Notes on this mode:
+  * No Apple ID or password is involved. It uses the same public endpoints the
+    shared album's web page does, so nothing is stored on the Pi.
+  * **Anyone with the link can view that album.** The link is long and
+    unguessable, but it isn't password protected - don't put private photos in it.
+  * Unlike the playlist mode, this cache is **kept between launches**. Photos
+    are tracked by their iCloud IDs, so a restart re-uses what's already on
+    disk and only syncs what actually changed in the album.
+  * If the album can't be reached (no network yet at boot, for example) the
+    previously cached photos keep showing rather than the screen going blank.
+  * Videos in the album are skipped, and photos are shown newest first as they
+    download.
+  * Apple doesn't document these endpoints, so this could break if they change
+    them. If that happens the slideshow falls back to the cached photos.
 
 #### Severe weather alerts
 PiClock can show a red warning bar - below the clock, above the sunrise/set

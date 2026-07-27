@@ -19,8 +19,9 @@ The digital display looks much sleaker and I didn't intend to support it for my 
     you configure, with a gradual fade between day and night.
   * **Always-on display** - best-effort suppression of the OS screensaver,
     screen blanking, and sleep on Windows, macOS, and Linux (X11 and Wayland).
-  * **Slideshow from a web playlist** - point PiClock at a text file of image
-    URLs, with crossfade transitions between images.
+  * **Slideshow from a web playlist or a shared iCloud album** - point PiClock
+    at a text file of image URLs, or at an iCloud album so photos you add from
+    your phone show up on the clock. Crossfade transitions between images.
   * **Scripted install** - `install.sh` (Linux/macOS) and `install.bat`
     (Windows) set up the virtualenv, packages, fonts, and config interactively.
   * **Pressure trend arrow**, cursor auto-hide, a short-lived on-disk API cache,

@@ -1571,10 +1571,75 @@ def qtstart():
 # resolved from this file's own location so it works regardless of cwd).
 SLIDESHOW_LOCAL_DIR = os.path.normpath(
     os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'Pictures', 'Slideshow'))
-# web_slideshow_playlist = 1: downloaded images from Config.slideshow_url are cached here.
+# web_slideshow_playlist = 1 and 2: downloaded images are cached here.
 SLIDESHOW_CACHE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'slideshow_cache')
 SLIDESHOW_PLAYLIST_REFRESH_SEC = 2 * 60 * 60  # re-check the web playlist for changes every 2 hours
 SLIDESHOW_IMAGE_EXTENSIONS = ('.jpg', '.jpeg', '.png', '.gif', '.bmp', '.webp')
+
+# web_slideshow_playlist = 2: a shared iCloud album (Config.slideshow_icloud_album).
+# Apple has no public Photos API, but an album shared with "Public Website"
+# enabled is served by these two undocumented endpoints, with no Apple ID or
+# credentials involved. Undocumented means Apple can change it without notice,
+# so every failure here leaves whatever is already cached on screen.
+ICLOUD_DEFAULT_HOST = 'https://p123-sharedstreams.icloud.com'
+ICLOUD_ASSET_BATCH = 100  # photoGuids per webasseturls request
+# Signed asset URLs expire after roughly an hour, so they are requested a batch
+# at a time as the download queue drains rather than all up front.
+
+
+def icloud_album_token(share_url):
+    """Pull the album token out of a Photos share URL.
+
+    Accepts the full link ('https://www.icloud.com/sharedalbum/#B0Xabc') or a
+    bare token, and returns '' if there is nothing usable.
+    """
+    token = (share_url or '').strip()
+    if '#' in token:
+        token = token.split('#', 1)[1]
+    token = token.strip().strip('/')
+    if not token or not token.replace('-', '').replace('_', '').isalnum():
+        return ''
+    return token
+
+
+def icloud_best_derivative(photo):
+    """Largest available derivative for a photo, or None if it isn't a usable
+    still image (shared albums can also hold videos)."""
+    if str(photo.get('mediaAssetType', '')).lower() == 'video':
+        return None
+    best = None
+    for derivative in (photo.get('derivatives') or {}).values():
+        try:
+            size = int(derivative.get('fileSize', 0))
+        except (TypeError, ValueError):
+            continue
+        if not derivative.get('checksum') or size <= 0:
+            continue
+        if best is None or size > best[0]:
+            best = (size, derivative)
+    return best[1] if best else None
+
+
+def icloud_photo_entries(webstream_data):
+    """Flatten a webstream response into [{guid, checksum, cachename}], newest
+    first so the most recent photos are downloaded and shown soonest."""
+    photos = []
+    for photo in webstream_data.get('photos') or []:
+        derivative = icloud_best_derivative(photo)
+        guid = photo.get('photoGuid')
+        if not derivative or not guid:
+            continue
+        photos.append({
+            'guid': guid,
+            'checksum': derivative['checksum'],
+            'sortkey': photo.get('dateCreated') or photo.get('batchDateCreated') or '',
+            # Keyed on guid+checksum, which are stable, unlike the signed and
+            # frequently rotating asset URLs.
+            'cachename': 'icloud_%s.img' % hashlib.sha1(
+                ('%s/%s' % (guid, derivative['checksum'])).encode('utf-8')).hexdigest(),
+        })
+    photos.sort(key=lambda p: p['sortkey'], reverse=True)
+    return photos
 
 
 ALERT_CYCLE_MS = 12000  # how long each alert shows before cycling to the next, when more than one is active
@@ -1895,9 +1960,19 @@ class SlideShow(QtWidgets.QLabel):
         self.image_reply = None
         self.pending_downloads = []
 
+        # iCloud album state (web_slideshow_playlist = 2)
+        self.icloud_host = ICLOUD_DEFAULT_HOST
+        self.icloud_reply = None
+        self.icloud_queue = []  # photos still needing an asset URL + download
+        self._icloud_redirected = False
+
         os.makedirs(SLIDESHOW_LOCAL_DIR, exist_ok=True)
         os.makedirs(SLIDESHOW_CACHE_DIR, exist_ok=True)
-        self._clear_cache_dir()  # start every launch from a clean slate; nothing to redownload lingers forever
+        if Config.web_slideshow_playlist != 2:
+            # URL-keyed cache entries can go stale silently, so mode 1 starts
+            # clean each launch. iCloud entries are keyed on stable photo IDs,
+            # so that cache is kept and only synced against the album.
+            self._clear_cache_dir()
 
         self.setObjectName('slideShow')
         self.setGeometry(rect)
@@ -1924,7 +1999,15 @@ class SlideShow(QtWidgets.QLabel):
         self.timer.timeout.connect(self.switch_image)
         self.timer.start(int(1000 * interval + random.uniform(1, 10)))
 
-        if Config.web_slideshow_playlist:
+        if Config.web_slideshow_playlist == 2:
+            # Show whatever survived from last run straight away, so a restart
+            # (or a boot with no network yet) isn't a blank screen.
+            self.load_cached_images()
+            self.refresh_icloud_album()
+            self.playlist_timer = QtCore.QTimer()
+            self.playlist_timer.timeout.connect(self.refresh_icloud_album)
+            self.playlist_timer.start(int(1000 * SLIDESHOW_PLAYLIST_REFRESH_SEC))
+        elif Config.web_slideshow_playlist:
             self.refresh_playlist()  # downloads fresh on launch
             self.playlist_timer = QtCore.QTimer()
             self.playlist_timer.timeout.connect(self.refresh_playlist)
@@ -1950,9 +2033,14 @@ class SlideShow(QtWidgets.QLabel):
             self.display_image(self.img_list[self.count])
 
     def display_image(self, path):
-        image = QtGui.QImage(path)
+        # Read through QImageReader with autoTransform so EXIF orientation is
+        # applied; QImage(path) ignores it, which lands portrait phone photos
+        # on their side.
+        reader = QtGui.QImageReader(path)
+        reader.setAutoTransform(True)
+        image = reader.read()
         if image.isNull():
-            print(f"ERROR: Unable to load slideshow image: {path}")
+            print(f"ERROR: Unable to load slideshow image: {path}: {reader.errorString()}")
             return
         pixmap = QtGui.QPixmap.fromImage(image).scaled(
             self.size(),
@@ -2089,12 +2177,153 @@ class SlideShow(QtWidgets.QLabel):
         if reply.error() != QNetworkReply.NetworkError.NoError:
             print(f"ERROR: Unable to download {reply.url().toString()}: {reply.errorString()}")
         else:
-            with open(dest, 'wb') as f:
-                f.write(bytes(reply.readAll()))
+            try:
+                with open(dest, 'wb') as f:
+                    f.write(bytes(reply.readAll()))
+            except OSError as e:
+                print(f"ERROR: Unable to save slideshow image {dest}: {e}")
+                self._download_next_pending()
+                return
             self.img_list.append(dest)
             if len(self.img_list) == 1:
                 self.switch_image()
-        self._download_next_pending()
+        if self.pending_downloads:
+            self._download_next_pending()
+        else:
+            # Batch drained; ask iCloud for the next set of asset URLs (no-op
+            # in the other slideshow modes).
+            self._icloud_request_asset_urls()
+
+    # --- shared iCloud album (web_slideshow_playlist = 2) ---
+
+    def load_cached_images(self):
+        """Show images already in the cache from a previous run."""
+        try:
+            files = [os.path.join(SLIDESHOW_CACHE_DIR, f)
+                     for f in os.listdir(SLIDESHOW_CACHE_DIR)]
+        except OSError as e:
+            print(f"ERROR: Unable to read {SLIDESHOW_CACHE_DIR}: {e}")
+            return
+        if not files:
+            return
+        random.shuffle(files)
+        self.img_list = files
+        self.count = 0
+        print(f"SLIDESHOW: {len(files)} image(s) already cached")
+        self.switch_image()
+
+    def _icloud_post(self, path, payload, on_finished):
+        global manager
+        token = icloud_album_token(Config.slideshow_icloud_album)
+        if not token:
+            print('ERROR: slideshow_icloud_album is not a usable iCloud share link')
+            return
+        url = f'{self.icloud_host}/{token}/sharedstreams/{path}'
+        request = QNetworkRequest(QUrl(url))
+        request.setHeader(QNetworkRequest.KnownHeaders.ContentTypeHeader, 'application/json')
+        self.icloud_reply = manager.post(request, json.dumps(payload).encode('utf-8'))
+        self.icloud_reply.finished.connect(on_finished)
+
+    def refresh_icloud_album(self):
+        """Fetch the album's photo list (step 1 of 2)."""
+        self._icloud_redirected = False
+        print('SLIDESHOW: checking shared iCloud album')
+        self._icloud_post('webstream', {'streamCtag': None}, self._webstream_finished)
+
+    def _webstream_finished(self):
+        reply = self.icloud_reply
+        reply.deleteLater()
+
+        # Apple answers from a per-album partition host and redirects if the
+        # first guess was wrong. Qt won't follow this itself: it's a non-standard
+        # 330 on a POST.
+        redirect = bytes(reply.rawHeader(b'X-Apple-MMe-Host')).decode('utf-8', 'replace')
+        if redirect and not self._icloud_redirected:
+            self._icloud_redirected = True
+            self.icloud_host = 'https://' + redirect
+            print(f'SLIDESHOW: iCloud redirected to {redirect}')
+            self._icloud_post('webstream', {'streamCtag': None}, self._webstream_finished)
+            return
+
+        if reply.error() != QNetworkReply.NetworkError.NoError:
+            print(f'ERROR: shared iCloud album request failed: {reply.errorString()}')
+            return
+        try:
+            data = json.loads(str(bytes(reply.readAll()), 'utf-8'))
+        except ValueError:
+            print('WARNING:', traceback.format_exc())
+            print('WARNING: could not parse the shared iCloud album response')
+            return
+
+        photos = icloud_photo_entries(data)
+        if not photos:
+            print('WARNING: shared iCloud album returned no usable photos')
+            return
+
+        wanted = {p['cachename']: p for p in photos}
+        for existing in os.listdir(SLIDESHOW_CACHE_DIR):
+            if existing not in wanted:
+                try:
+                    os.remove(os.path.join(SLIDESHOW_CACHE_DIR, existing))
+                except OSError:
+                    pass
+
+        cached, missing = [], []
+        for photo in photos:
+            dest = os.path.join(SLIDESHOW_CACHE_DIR, photo['cachename'])
+            if os.path.exists(dest):
+                cached.append(dest)
+            else:
+                photo['dest'] = dest
+                missing.append(photo)
+
+        random.shuffle(cached)
+        self.img_list = cached
+        self.count = 0
+        if cached:
+            self.switch_image()
+
+        self.icloud_queue = missing
+        print(f'SLIDESHOW: iCloud album has {len(photos)} photo(s); '
+              f'{len(cached)} cached, {len(missing)} to download')
+        self._icloud_request_asset_urls()
+
+    def _icloud_request_asset_urls(self):
+        """Swap the next batch of photo IDs for signed URLs (step 2 of 2)."""
+        if not self.icloud_queue:
+            return
+        batch = self.icloud_queue[:ICLOUD_ASSET_BATCH]
+        self._icloud_post('webasseturls',
+                          {'photoGuids': [p['guid'] for p in batch]},
+                          lambda: self._asseturls_finished(batch))
+
+    def _asseturls_finished(self, batch):
+        reply = self.icloud_reply
+        reply.deleteLater()
+        self.icloud_queue = self.icloud_queue[len(batch):]
+
+        if reply.error() != QNetworkReply.NetworkError.NoError:
+            print(f'ERROR: could not get iCloud asset URLs: {reply.errorString()}')
+            return
+        try:
+            items = json.loads(str(bytes(reply.readAll()), 'utf-8')).get('items') or {}
+        except ValueError:
+            print('WARNING:', traceback.format_exc())
+            print('WARNING: could not parse the iCloud asset URL response')
+            return
+
+        for photo in batch:
+            item = items.get(photo['checksum'])
+            if not item or not item.get('url_location') or not item.get('url_path'):
+                continue
+            self.pending_downloads.append(
+                ('https://' + item['url_location'] + item['url_path'], photo['dest']))
+
+        if self.pending_downloads:
+            print(f"SLIDESHOW: downloading {len(self.pending_downloads)} new image(s) from iCloud")
+            self._download_next_pending()
+        else:
+            self._icloud_request_asset_urls()
 
     def play_pause(self):
         self.pause = not self.pause
@@ -2861,7 +3090,14 @@ except AttributeError:
 try:
     Config.web_slideshow_playlist
 except AttributeError:
-    Config.web_slideshow_playlist = 0  # 0 = local images from Pictures/Slideshow, 1 = Config.slideshow_url
+    # 0 = local images from Pictures/Slideshow, 1 = Config.slideshow_url,
+    # 2 = Config.slideshow_icloud_album
+    Config.web_slideshow_playlist = 0
+
+try:
+    Config.slideshow_icloud_album
+except AttributeError:
+    Config.slideshow_icloud_album = ''  # shared iCloud album link, used when web_slideshow_playlist = 2
 
 try:
     Config.slide_transition_ms
