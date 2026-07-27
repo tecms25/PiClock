@@ -3169,6 +3169,29 @@ try:
 except AttributeError:
     Config.useslideshow = 0
 
+# Layout defaults are the original ones, so an existing Config.py that predates
+# these settings looks exactly as it did. Config-Example.py ships the newer
+# 'photo' layout for fresh installs.
+try:
+    Config.layout
+except AttributeError:
+    Config.layout = 'classic'  # 'photo' puts the clock on top; see Config-Example.py
+
+try:
+    Config.scrim_opacity
+except AttributeError:
+    Config.scrim_opacity = 0  # 0-255 darkness of the gradients behind text; 0 disables them
+
+try:
+    Config.datesize
+except AttributeError:
+    Config.datesize = 50  # day/date font size
+
+try:
+    Config.footersize
+except AttributeError:
+    Config.footersize = 24  # sun rise/set and moon phase font size
+
 # Check if Mapbox API key is set, and use mapbox if so
 usemapbox = 0
 try:
@@ -3322,7 +3345,7 @@ datex.setObjectName('datex')
 datex.setStyleSheet('#datex { font-family:"Open Sans"; color: ' +
                     Config.textcolor +
                     '; background-color: transparent; font-size: ' +
-                    str(int(50 * xscale * Config.fontmult)) +
+                    str(int(Config.datesize * xscale * Config.fontmult)) +
                     'px; ' +
                     Config.fontattr +
                     '}')
@@ -3337,7 +3360,7 @@ datex2.setObjectName('datex2')
 datex2.setStyleSheet('#datex2 { font-family:"Open Sans"; color: ' +
                      Config.textcolor +
                      '; background-color: transparent; font-size: ' +
-                     str(int(50 * xscale * Config.fontmult)) + 'px; ' +
+                     str(int(Config.datesize * xscale * Config.fontmult)) + 'px; ' +
                      Config.fontattr +
                      '}')
 datex2.setAlignment(Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignTop)
@@ -3544,7 +3567,7 @@ bottom.setObjectName('bottom')
 bottom.setStyleSheet('#bottom { font-family:"Open Sans"; color: ' +
                      Config.textcolor +
                      '; background-color: transparent; font-size: ' +
-                     str(int(24 * xscale * Config.fontmult)) +
+                     str(int(Config.footersize * xscale * Config.fontmult)) +
                      'px; ' +
                      Config.fontattr +
                      '}')
@@ -3553,13 +3576,16 @@ bottom.setGeometry(0, int(height - 50 * yscale), width, int(50 * yscale))
 
 add_text_shadow(bottom)
 
-# Severe weather warning bubble: below the clock, above the sunrise/set footer.
+# Severe weather warning bubble: below the clock, clear of the inside
+# temperature and the sunrise/set footer stacked underneath it. The bubble is
+# raised above its siblings so the whole bar stays clickable, which means it
+# would paint over anything it overlapped.
 # The detail panel is a direct child of w (like brightness_overlay) so it sits
 # on top of both frame1/frame2 and is reachable from either page.
 alertDetailPanel = AlertDetailPanel(w, width, height)
 alertrect = QtCore.QRect(
     int(width * 0.2),
-    int(height * 0.855),
+    int(height - 176 * yscale),
     int(width * 0.6),
     int(height * 0.075))
 alertBubble = AlertBubble(foreGround, alertrect, alertDetailPanel)
@@ -3631,6 +3657,81 @@ for i in range(0, 9):
 # above the display-only labels created after it - otherwise they win
 # hit-testing and only the part of the bar they don't cover responds to taps.
 alertBubble.raise_()
+
+
+def add_scrim(x, y, w_, h_, gradient):
+    """Gradient panel drawn under the text, fading out toward the middle of the
+    screen. Keeps light text readable over a bright background without hiding
+    that part of the image behind a solid block."""
+    panel = QtWidgets.QFrame(foreGround)
+    panel.setGeometry(int(x), int(y), int(w_), int(h_))
+    panel.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+    panel.setStyleSheet('background: ' + gradient + ';')
+    panel.lower()  # behind every other foreGround child, above the background
+    return panel
+
+
+def add_scrims():
+    """Darken the edges where text lives: left weather block, right forecast
+    column, top and bottom bands."""
+    o = max(0, min(255, int(Config.scrim_opacity)))
+    if o == 0:
+        return
+    add_scrim(0, 0, width * 0.32, height,
+              'qlineargradient(x1:0, y1:0, x2:1, y2:0,'
+              ' stop:0 rgba(0,0,0,%d), stop:0.65 rgba(0,0,0,%d), stop:1 rgba(0,0,0,0))'
+              % (o, int(o * 0.59)))
+    add_scrim(width * 0.70, 0, width * 0.30, height,
+              'qlineargradient(x1:0, y1:0, x2:1, y2:0,'
+              ' stop:0 rgba(0,0,0,0), stop:0.35 rgba(0,0,0,%d), stop:1 rgba(0,0,0,%d))'
+              % (int(o * 0.59), o))
+    add_scrim(0, 0, width, height * 0.23,
+              'qlineargradient(x1:0, y1:0, x2:0, y2:1,'
+              ' stop:0 rgba(0,0,0,%d), stop:1 rgba(0,0,0,0))' % int(o * 0.95))
+    add_scrim(0, height * 0.76, width, height * 0.24,
+              'qlineargradient(x1:0, y1:0, x2:0, y2:1,'
+              ' stop:0 rgba(0,0,0,0), stop:0.45 rgba(0,0,0,%d), stop:1 rgba(0,0,0,%d))'
+              % (int(o * 0.73), int(o * 0.98)))
+
+
+# Vertical bands for the 'photo' layout, as fractions of screen height.
+PHOTO_CLOCK_TOP = 0.004
+PHOTO_CLOCK_H = 0.175
+PHOTO_TEMP_TOP = 0.152
+PHOTO_TEMP_H = 0.050
+PHOTO_FOOTER_TOP = 1.0 - 50.0 / 900.0   # where the sun/moon line already sits
+PHOTO_DATE_H = 46.0 / 900.0
+PHOTO_DATE_TOP = PHOTO_FOOTER_TOP - PHOTO_DATE_H
+PHOTO_ALERT_H = 0.075
+PHOTO_ALERT_TOP = PHOTO_DATE_TOP - PHOTO_ALERT_H - 0.010
+
+
+def apply_photo_layout():
+    """Rearrange page 1 to keep the background image visible: clock at the top
+    with the inside temperature under it, and alert / date / sun-moon stacked
+    along the bottom. The classic layout centres a much larger clock instead."""
+    clockface.setGeometry(int(width * 0.28), int(height * PHOTO_CLOCK_TOP),
+                          int(width * 0.44), int(height * PHOTO_CLOCK_H))
+    clockface.setAlignment(Qt.AlignmentFlag.AlignCenter)
+
+    temp.setStyleSheet(temp.styleSheet().replace(
+        'font-size: ' + str(int(30 * xscale * Config.fontmult)) + 'px',
+        'font-size: ' + str(int(Config.footersize * xscale * Config.fontmult)) + 'px'))
+    temp.setGeometry(0, int(height * PHOTO_TEMP_TOP), width, int(height * PHOTO_TEMP_H))
+    temp.setAlignment(Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignVCenter)
+
+    # Centred vertically: the <sup> in the date makes the line taller than the
+    # font size suggests, and AlignTop clips its descenders.
+    datex.setGeometry(0, int(height * PHOTO_DATE_TOP), width, int(height * PHOTO_DATE_H))
+    datex.setAlignment(Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignVCenter)
+
+    alertBubble.setGeometry(int(width * 0.20), int(height * PHOTO_ALERT_TOP),
+                            int(width * 0.60), int(height * PHOTO_ALERT_H))
+
+
+add_scrims()
+if Config.layout == 'photo':
+    apply_photo_layout()
 
 manager = QtNetwork.QNetworkAccessManager()
 

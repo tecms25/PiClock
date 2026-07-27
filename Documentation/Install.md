@@ -495,6 +495,37 @@ GNOME (including Raspberry Pi OS with GNOME), `install.sh` additionally offers
 to turn off idle blanking, auto-lock, and auto-dim via `gsettings`, which is
 the reliable fix there.
 
+#### Layout and text legibility
+Light text over a bright photo needs help to stay readable, but a heavy drop
+shadow alone tends to bury the picture. Two settings control this:
+
+  * `layout` - `'photo'` or `'classic'`
+  * `scrim_opacity` - 0-255; 0 turns the gradient panels off
+
+`'classic'` is the original arrangement: a large clock centered on the screen,
+the day/date across the top, sun rise/set along the bottom.
+
+`'photo'` rearranges page 1 to keep the background image visible - the clock
+moves to the top with the inside temperature beneath it, and the severe
+weather alert, day/date and sun rise/set stack along the bottom. The middle of
+the screen is left for the image.
+
+`scrim_opacity` draws soft gradient panels behind the text along the left,
+right, top and bottom edges. They fade out toward the middle, so text stays
+fully opaque and readable while the photo still shows through - much better
+than making the text itself transparent, which costs legibility at a distance.
+This applies to both layouts, and to any background (it is not tied to the
+slideshow).
+
+Font sizes for the pieces this moves around:
+  * `digitalsize` - the clock (the `'photo'` layout suits roughly 100-110;
+    `'classic'` traditionally used 150)
+  * `datesize` - the day/date
+  * `footersize` - the sun rise/set and moon phase line
+
+An existing `Config.py` that predates these settings keeps the classic layout
+with no scrims, so upgrading changes nothing until you opt in.
+
 At this point, I'd not recommend many other changes until you have tested
 and gotten it running.
 

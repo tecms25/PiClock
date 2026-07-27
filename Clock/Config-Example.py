@@ -69,8 +69,22 @@ slideshow_icloud_album = ''  # e.g. 'https://www.icloud.com/sharedalbum/#B0Xabc1
 # Digital clock
 digitalcolor = '#FFFFFF' #Color of the text
 digitalformat = '{0:%-I:%M%p}'  # Format of the digital clock face
-digitalsize = 150 # Font Size of Clock
+digitalsize = 108 # Font Size of Clock ('photo' layout suits roughly 100-110)
 digitalformat2 = '{0:%-I:%M:%S %p}'  # Format of the digital time on second screen
+
+# Layout and text legibility
+# 'classic' - the original arrangement: a large clock centered on the screen,
+#             day/date across the top, sun rise/set along the bottom
+# 'photo'   - clock at the top with the inside temperature under it, and the
+#             severe weather alert, day/date and sun rise/set stacked along the
+#             bottom. Leaves far more of the background image visible.
+layout = 'photo'
+# Gradient panels drawn behind the text (left, right, top and bottom edges) so
+# light text stays readable over a bright image without hiding it behind a
+# solid block. 0-255; 0 turns them off. Applies to both layouts.
+scrim_opacity = 205
+datesize = 30  # Font size of the day/date
+footersize = 24  # Font size of the sun rise/set and moon phase line
 
 # Mapbox map styles, need API key (mbapi in ApiKeys.py)
 # If no Mapbox API is set, Google Maps are used
