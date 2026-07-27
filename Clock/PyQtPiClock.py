@@ -2184,7 +2184,10 @@ class SlideShow(QtWidgets.QLabel):
                 print(f"ERROR: Unable to save slideshow image {dest}: {e}")
                 self._download_next_pending()
                 return
-            self.img_list.append(dest)
+            # Slot each new image in at random rather than appending: photos
+            # are fetched in a deliberate order (newest first for iCloud), so
+            # appending would play the whole album back in that same order.
+            self.img_list.insert(random.randint(0, len(self.img_list)), dest)
             if len(self.img_list) == 1:
                 self.switch_image()
         if self.pending_downloads:
