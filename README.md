@@ -24,10 +24,10 @@ The digital display looks much sleaker and I didn't intend to support it for my 
     your phone show up on the clock. Crossfade transitions between images.
   * **Scripted install** - `install.sh` (Linux/macOS) and `install.bat`
     (Windows) set up the virtualenv, packages, fonts, and config interactively.
-  * **Photo-friendly layout** - an optional arrangement that moves the clock to
-    the top and stacks the alert, date and sun/moon along the bottom, with soft
-    gradient panels behind the text so it stays readable without hiding the
-    background image.
+  * **Photo-friendly layout** - an optional arrangement that stacks the time,
+    date and sun/moon compactly along the bottom and moves the severe weather
+    alert up top, with soft gradient panels behind the text so it stays
+    readable without hiding the background image.
   * **Pressure trend arrow**, cursor auto-hide, a short-lived on-disk API cache,
     and optional daily log rotation.
 

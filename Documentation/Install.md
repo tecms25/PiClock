@@ -505,10 +505,10 @@ shadow alone tends to bury the picture. Two settings control this:
 `'classic'` is the original arrangement: a large clock centered on the screen,
 the day/date across the top, sun rise/set along the bottom.
 
-`'photo'` rearranges page 1 to keep the background image visible - the clock
-moves to the top with the inside temperature beneath it, and the severe
-weather alert, day/date and sun rise/set stack along the bottom. The middle of
-the screen is left for the image.
+`'photo'` rearranges page 1 to keep the background image visible. The inside
+temperature, time, day/date and sun rise/set stack along the bottom, sized so
+the time leads that group, and the severe weather alert moves up near the top.
+The middle of the screen is left for the image.
 
 `scrim_opacity` draws soft gradient panels behind the text along the left,
 right, top and bottom edges. They fade out toward the middle, so text stays
@@ -518,7 +518,7 @@ This applies to both layouts, and to any background (it is not tied to the
 slideshow).
 
 Font sizes for the pieces this moves around:
-  * `digitalsize` - the clock (the `'photo'` layout suits roughly 100-110;
+  * `digitalsize` - the clock (the `'photo'` layout suits roughly 70-85;
     `'classic'` traditionally used 150)
   * `datesize` - the day/date
   * `footersize` - the sun rise/set and moon phase line

@@ -69,7 +69,7 @@ slideshow_icloud_album = ''  # e.g. 'https://www.icloud.com/sharedalbum/#B0Xabc1
 # Digital clock
 digitalcolor = '#FFFFFF' #Color of the text
 digitalformat = '{0:%-I:%M%p}'  # Format of the digital clock face
-digitalsize = 108 # Font Size of Clock ('photo' layout suits roughly 100-110)
+digitalsize = 76 # Font Size of Clock ('photo' layout suits roughly 70-85)
 digitalformat2 = '{0:%-I:%M:%S %p}'  # Format of the digital time on second screen
 
 # Layout and text legibility
@@ -84,7 +84,7 @@ layout = 'photo'
 # solid block. 0-255; 0 turns them off. Applies to both layouts.
 scrim_opacity = 205
 datesize = 30  # Font size of the day/date
-footersize = 24  # Font size of the sun rise/set and moon phase line
+footersize = 20  # Font size of the sun rise/set and moon phase line
 
 # Mapbox map styles, need API key (mbapi in ApiKeys.py)
 # If no Mapbox API is set, Google Maps are used

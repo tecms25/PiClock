@@ -1642,16 +1642,27 @@ def icloud_photo_entries(webstream_data):
     return photos
 
 
-ALERT_CYCLE_MS = 12000  # how long each alert shows before cycling to the next, when more than one is active
+# With more than one alert active, each stays up until its own ticker has run
+# once, so a long headline is never cut off. The ticker reports when it has
+# cleared the left edge rather than the delay being calculated up front, which
+# keeps the swap in step with what is actually on screen.
+ALERT_CYCLE_PAD_MS = 600  # beat between the text clearing and the next alert
+ALERT_CYCLE_MAX_MS = 40000  # safety cap, so one huge headline can't stall the rest
 TICKER_PX_PER_TICK = 2  # ticker scroll speed
 TICKER_TICK_MS = 30
-TICKER_GAP_PX = 80  # blank gap between one loop of ticker text and the next
-TICKER_START_DELAY_MS = 2000  # hold new text still this long before it scrolls, so it's readable
+TICKER_GAP_PX = 80  # blank gap after the text leaves before it re-enters
 
 
 class _Ticker(QtWidgets.QWidget):
-    """A single line of text that scrolls continuously right-to-left, like a
-    news/weather ticker, when it's too wide to fit; otherwise sits still."""
+    """A single line of text that runs right-to-left like a news ticker.
+
+    It always scrolls, entering from the right edge and looping once it has
+    left on the left, so a short line behaves the same as a long one instead
+    of sitting still and left-aligned.
+    """
+
+    # Emitted once per pass, the moment the text has cleared the left edge.
+    finished = QtCore.pyqtSignal()
 
     def __init__(self, parent):
         super().__init__(parent)
@@ -1660,7 +1671,7 @@ class _Ticker(QtWidgets.QWidget):
         self._label.setStyleSheet('background: transparent;')
         self._label.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
         self._x = 0
-        self._hold_ticks = 0
+        self._announced = False
 
         self._timer = QtCore.QTimer(self)
         self._timer.timeout.connect(self._advance)
@@ -1671,9 +1682,13 @@ class _Ticker(QtWidgets.QWidget):
         self._label.setText(text)
         self._label.adjustSize()
         self._label.setFixedHeight(max(self.height(), self._label.sizeHint().height()))
-        self._x = 0
-        self._label.move(0, 0)
-        self._hold_ticks = int(TICKER_START_DELAY_MS / TICKER_TICK_MS)
+        self._reset_offscreen()
+
+    def _reset_offscreen(self):
+        """Park the text just past the right edge, ready to scroll in."""
+        self._x = self.width()
+        self._announced = False
+        self._label.move(self._x, 0)
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
@@ -1683,19 +1698,15 @@ class _Ticker(QtWidgets.QWidget):
     def _advance(self):
         if not self.isVisible() or not self._label.text():
             return
-        text_width = self._label.width()
-        if text_width <= self.width():
-            self._label.move(0, 0)
-            return
-        if self._hold_ticks > 0:
-            # Sitting still at the start of the text so it can be read before
-            # it starts moving.
-            self._hold_ticks -= 1
-            return
         self._x -= TICKER_PX_PER_TICK
-        if self._x < -(text_width + TICKER_GAP_PX):
-            self._x = self.width()
+        if self._x < -(self._label.width() + TICKER_GAP_PX):
+            self._reset_offscreen()
+            return
         self._label.move(self._x, 0)
+        # Tail has passed the left edge: the line has been shown in full.
+        if not self._announced and self._x + self._label.width() <= 0:
+            self._announced = True
+            self.finished.emit()
 
 
 class _EventSink(QtWidgets.QFrame):
@@ -1710,7 +1721,7 @@ class AlertBubble(QtWidgets.QFrame):
     """Red, semi-transparent warning bar for active NOAA/NWS severe weather
     alerts (see get_noaa_alerts()). Hidden when there are none; fades in/out
     as alerts appear or clear, cycles through multiple active alerts, and
-    scrolls the headline/area when it doesn't fit. Tap it for full details."""
+    runs the area/headline past as a ticker. Tap it for full details."""
 
     def __init__(self, parent, rect, detail_panel):
         QtWidgets.QFrame.__init__(self, parent)
@@ -1752,13 +1763,19 @@ class AlertBubble(QtWidgets.QFrame):
         self._anim = None
         self._shown = False
 
+        # Driven by the ticker finishing rather than a fixed interval, so an
+        # alert is never swapped out mid-sentence or left replaying.
         self.cycle_timer = QtCore.QTimer()
+        self.cycle_timer.setSingleShot(True)
         self.cycle_timer.timeout.connect(self._cycle)
-        self.cycle_timer.start(ALERT_CYCLE_MS)
+        self.ticker.finished.connect(self._ticker_finished)
 
     def set_alerts(self, alerts):
         self.alerts = alerts
         self.index = 0
+        # Drop any pending cycle from the previous set; _show_current() re-arms
+        # it when there is still more than one alert to rotate through.
+        self.cycle_timer.stop()
         if alerts:
             self._show_current()
             if not self._shown:
@@ -1784,7 +1801,17 @@ class AlertBubble(QtWidgets.QFrame):
         self.title_label.setText(title)
 
         ticker_bits = [b for b in (alert.get('area'), alert.get('headline')) if b]
-        self.ticker.set_text('     •     '.join(ticker_bits), self._ticker_style)
+        self.ticker.set_text('   •   '.join(ticker_bits), self._ticker_style)
+
+        if len(self.alerts) > 1:
+            # Backstop only: normally _ticker_finished() gets there first.
+            self.cycle_timer.start(ALERT_CYCLE_MAX_MS)
+
+    def _ticker_finished(self):
+        """The line has run in full, so move on after a short beat. Restarting
+        the timer here pre-empts the backstop armed in _show_current()."""
+        if len(self.alerts) > 1:
+            self.cycle_timer.start(ALERT_CYCLE_PAD_MS)
 
     def mousePressEvent(self, event):
         if self.alerts:
@@ -3583,10 +3610,14 @@ add_text_shadow(bottom)
 # The detail panel is a direct child of w (like brightness_overlay) so it sits
 # on top of both frame1/frame2 and is reachable from either page.
 alertDetailPanel = AlertDetailPanel(w, width, height)
+# Narrow enough to clear the weather block on the left and the forecast column
+# on the right; both start ~300 design units in from their edge.
+ALERT_X = 0.22
+ALERT_W = 0.56
 alertrect = QtCore.QRect(
-    int(width * 0.2),
+    int(width * ALERT_X),
     int(height - 176 * yscale),
-    int(width * 0.6),
+    int(width * ALERT_W),
     int(height * 0.075))
 alertBubble = AlertBubble(foreGround, alertrect, alertDetailPanel)
 
@@ -3688,45 +3719,60 @@ def add_scrims():
     add_scrim(0, 0, width, height * 0.23,
               'qlineargradient(x1:0, y1:0, x2:0, y2:1,'
               ' stop:0 rgba(0,0,0,%d), stop:1 rgba(0,0,0,0))' % int(o * 0.95))
-    add_scrim(0, height * 0.76, width, height * 0.24,
+    # The 'photo' layout stacks time/date/sun-moon along the bottom, so its
+    # gradient has to start higher than the classic footer alone needs.
+    band_top = 0.68 if Config.layout == 'photo' else 0.76
+    add_scrim(0, height * band_top, width, height * (1 - band_top),
               'qlineargradient(x1:0, y1:0, x2:0, y2:1,'
               ' stop:0 rgba(0,0,0,0), stop:0.45 rgba(0,0,0,%d), stop:1 rgba(0,0,0,%d))'
               % (int(o * 0.73), int(o * 0.98)))
 
 
-# Vertical bands for the 'photo' layout, as fractions of screen height.
-PHOTO_CLOCK_TOP = 0.004
-PHOTO_CLOCK_H = 0.175
-PHOTO_TEMP_TOP = 0.152
-PHOTO_TEMP_H = 0.050
-PHOTO_FOOTER_TOP = 1.0 - 50.0 / 900.0   # where the sun/moon line already sits
-PHOTO_DATE_H = 46.0 / 900.0
-PHOTO_DATE_TOP = PHOTO_FOOTER_TOP - PHOTO_DATE_H
+# Band heights for the 'photo' layout, in the same 900-unit design space the
+# rest of the layout uses (multiplied by yscale at build time). The bottom
+# block stacks upward from the footer: sun/moon, day/date, clock, inside temp.
+PHOTO_FOOTER_H = 44
+PHOTO_DATE_H = 46
+PHOTO_CLOCK_H = 100
+PHOTO_TEMP_H = 40
+PHOTO_GAP = 4
+# The alert sits high on the screen, well clear of the bottom block.
+PHOTO_ALERT_TOP = 0.10
 PHOTO_ALERT_H = 0.075
-PHOTO_ALERT_TOP = PHOTO_DATE_TOP - PHOTO_ALERT_H - 0.010
 
 
 def apply_photo_layout():
-    """Rearrange page 1 to keep the background image visible: clock at the top
-    with the inside temperature under it, and alert / date / sun-moon stacked
-    along the bottom. The classic layout centres a much larger clock instead."""
-    clockface.setGeometry(int(width * 0.28), int(height * PHOTO_CLOCK_TOP),
-                          int(width * 0.44), int(height * PHOTO_CLOCK_H))
+    """Rearrange page 1 to keep the background image visible.
+
+    The time, day/date and sun/moon line stack along the bottom with the clock
+    as the largest of the three, the inside temperature sits above them, and
+    the severe weather alert moves up out of the way. The classic layout
+    centres a much larger clock instead.
+    """
+    footer_top = 900 - PHOTO_FOOTER_H
+    date_top = footer_top - PHOTO_GAP - PHOTO_DATE_H
+    clock_top = date_top - PHOTO_GAP - PHOTO_CLOCK_H
+    temp_top = clock_top - PHOTO_GAP - PHOTO_TEMP_H
+
+    clockface.setGeometry(0, int(clock_top * yscale), width, int(PHOTO_CLOCK_H * yscale))
     clockface.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
     temp.setStyleSheet(temp.styleSheet().replace(
         'font-size: ' + str(int(30 * xscale * Config.fontmult)) + 'px',
         'font-size: ' + str(int(Config.footersize * xscale * Config.fontmult)) + 'px'))
-    temp.setGeometry(0, int(height * PHOTO_TEMP_TOP), width, int(height * PHOTO_TEMP_H))
+    temp.setGeometry(0, int(temp_top * yscale), width, int(PHOTO_TEMP_H * yscale))
     temp.setAlignment(Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignVCenter)
 
     # Centred vertically: the <sup> in the date makes the line taller than the
     # font size suggests, and AlignTop clips its descenders.
-    datex.setGeometry(0, int(height * PHOTO_DATE_TOP), width, int(height * PHOTO_DATE_H))
+    datex.setGeometry(0, int(date_top * yscale), width, int(PHOTO_DATE_H * yscale))
     datex.setAlignment(Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignVCenter)
 
-    alertBubble.setGeometry(int(width * 0.20), int(height * PHOTO_ALERT_TOP),
-                            int(width * 0.60), int(height * PHOTO_ALERT_H))
+    bottom.setGeometry(0, int(footer_top * yscale), width, int(PHOTO_FOOTER_H * yscale))
+    bottom.setAlignment(Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignVCenter)
+
+    alertBubble.setGeometry(int(width * ALERT_X), int(height * PHOTO_ALERT_TOP),
+                            int(width * ALERT_W), int(height * PHOTO_ALERT_H))
 
 
 add_scrims()
