@@ -75,9 +75,10 @@ digitalformat2 = '{0:%-I:%M:%S %p}'  # Format of the digital time on second scre
 # Layout and text legibility
 # 'classic' - the original arrangement: a large clock centered on the screen,
 #             day/date across the top, sun rise/set along the bottom
-# 'photo'   - clock at the top with the inside temperature under it, and the
-#             severe weather alert, day/date and sun rise/set stacked along the
-#             bottom. Leaves far more of the background image visible.
+# 'photo'   - inside temperature, clock, day/date and sun rise/set stacked
+#             along the bottom with the time leading them, and the severe
+#             weather alert up near the top. Leaves far more of the background
+#             image visible.
 layout = 'photo'
 # Gradient panels drawn behind the text (left, right, top and bottom edges) so
 # light text stays readable over a bright image without hiding it behind a

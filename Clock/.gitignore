@@ -10,3 +10,4 @@
 /venv
 /slideshow_cache
 /api_cache
+*.bak-*

@@ -24,6 +24,8 @@ The digital display looks much sleaker and I didn't intend to support it for my 
     your phone show up on the clock. Crossfade transitions between images.
   * **Scripted install** - `install.sh` (Linux/macOS) and `install.bat`
     (Windows) set up the virtualenv, packages, fonts, and config interactively.
+    `update.sh` then offers to add any newly released settings to an existing
+    install without disturbing the values you have already set.
   * **Photo-friendly layout** - an optional arrangement that stacks the time,
     date and sun/moon compactly along the bottom and moves the severe weather
     alert up top, with soft gradient panels behind the text so it stays

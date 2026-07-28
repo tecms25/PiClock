@@ -90,6 +90,10 @@ def api_cache_write(url, data):
 API_CACHE_SWEEP_MAX_AGE_SECONDS = 60 * 60
 API_CACHE_SWEEP_INTERVAL_MS = 60 * 60 * 1000
 
+# How often a radar retries a base map or overlay that failed to download,
+# until it succeeds. Covers booting before the network is up.
+MAP_RETRY_MS = 10 * 60 * 1000
+
 
 def api_cache_cleanup():
     """Delete API_CACHE_DIR entries older than API_CACHE_SWEEP_MAX_AGE_SECONDS.
@@ -2434,11 +2438,10 @@ class Radar(QtWidgets.QLabel):
         self.baseurl = self.mapurl(radar, rect, overlayonly=False)
         print('INFO: map base url for ' + self.myname + ': ' + self.baseurl)
 
-        if usemapbox:
-            if 'overlay' in radar:
-                if radar['overlay'] != '':
-                    self.overlayurl = self.mapurl(radar, rect, overlayonly=True)
-                    print('INFO: map overlay url for ' + self.myname + ': ' + self.overlayurl)
+        self.wantoverlay = bool(usemapbox and radar.get('overlay'))
+        if self.wantoverlay:
+            self.overlayurl = self.mapurl(radar, rect, overlayonly=True)
+            print('INFO: map overlay url for ' + self.myname + ': ' + self.overlayurl)
 
         QtWidgets.QLabel.__init__(self, parent)
         self.interval = Config.radar_refresh * 60
@@ -2531,6 +2534,39 @@ class Radar(QtWidgets.QLabel):
         self.basereply = None
         self.timer = None
         self.overlayreply = None
+
+        # The base map and overlay are fetched once at startup. On a Pi that
+        # boots before the network is up that single attempt fails and the
+        # radar would sit on a blank background until the next restart, so
+        # keep retrying until each one lands.
+        self.basegood = False
+        self.overlaygood = False
+        self.maptimer = None
+
+    def maps_pending(self):
+        return (not self.basegood) or (self.wantoverlay and not self.overlaygood)
+
+    def schedule_map_retry(self):
+        """Run a retry timer while either map is still missing, and stop it
+        once they have both arrived."""
+        if not self.maps_pending():
+            if self.maptimer is not None:
+                self.maptimer.stop()
+                self.maptimer = None
+                print(f'INFO: {self.myname} maps loaded, no more retries needed')
+            return
+        if self.maptimer is None:
+            self.maptimer = QtCore.QTimer()
+            self.maptimer.timeout.connect(self.retry_maps)
+            self.maptimer.start(MAP_RETRY_MS)
+
+    def retry_maps(self):
+        if not self.basegood:
+            print(f'INFO: {self.myname} retrying base map')
+            self.getbase()
+        if self.wantoverlay and not self.overlaygood:
+            print(f'INFO: {self.myname} retrying map overlay')
+            self.getoverlay()
 
     def rtick(self):
         """Update radar display, synced to wall-clock time so every Radar
@@ -2816,10 +2852,16 @@ class Radar(QtWidgets.QLabel):
                         pass
                 else:
                     print('ERROR: Response from maps.googleapis.com: ' + basestr)
+                self.schedule_map_retry()
                 return
             api_cache_write(self.basereply.url().toString(), data)
         basepixmap = QPixmap()
-        basepixmap.loadFromData(data)
+        if not basepixmap.loadFromData(data):
+            print(f'ERROR: {self.myname} could not decode the base map image')
+            self.schedule_map_retry()
+            return
+        self.basegood = True
+        self.schedule_map_retry()
         if basepixmap.size() != self.rect.size():
             basepixmap = basepixmap.scaled(self.rect.size(), Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation)
         self.setPixmap(basepixmap)
@@ -2884,10 +2926,16 @@ class Radar(QtWidgets.QLabel):
                 except ValueError:  # includes json.decoder.JSONDecodeError
                     print('ERROR: Response from api.mapbox.com: ' + overlaystr)
                     pass
+                self.schedule_map_retry()
                 return
             api_cache_write(self.overlayreply.url().toString(), data)
         overlaypixmap = QPixmap()
-        overlaypixmap.loadFromData(data)
+        if not overlaypixmap.loadFromData(data):
+            print(f'ERROR: {self.myname} could not decode the map overlay image')
+            self.schedule_map_retry()
+            return
+        self.overlaygood = True
+        self.schedule_map_retry()
         if overlaypixmap.size() != self.rect.size():
             overlaypixmap = overlaypixmap.scaled(
                 self.rect.size(),
@@ -2923,10 +2971,9 @@ class Radar(QtWidgets.QLabel):
             self.interval = interval
         self.getbase()
 
-        if usemapbox:
-            if 'overlay' in self.radar:
-                if self.radar['overlay'] != '':
-                    self.getoverlay()
+        if self.wantoverlay:
+            self.getoverlay()
+        self.schedule_map_retry()
 
         self.timer = QtCore.QTimer()
         self.timer.timeout.connect(self.rtick)
@@ -2947,6 +2994,9 @@ class Radar(QtWidgets.QLabel):
         except AttributeError:
             print('WARNING:', traceback.format_exc())
             pass
+        if self.maptimer is not None:
+            self.maptimer.stop()
+            self.maptimer = None
 
 
 def realquit():

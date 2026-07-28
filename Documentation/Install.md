@@ -529,6 +529,34 @@ with no scrims, so upgrading changes nothing until you opt in.
 At this point, I'd not recommend many other changes until you have tested
 and gotten it running.
 
+### Upgrading an existing install
+Pulling a newer PiClock can bring new `Config.py` settings with it. Copying
+`Config-Example.py` over the top would wipe your location, API keys and
+preferences, so `update.sh` handles it for you:
+
+```
+cd PiClock
+git pull
+bash update.sh
+```
+
+Near the end it lists any settings your config is missing and asks before
+adding them. You can also run it yourself at any time:
+
+```
+python3 merge_config.py --dry-run   # list what you are missing
+python3 merge_config.py             # add it
+```
+
+It appends only the settings your `Clock/Config.py` and `Clock/ApiKeys.py` do
+not already have, at their default values and with their explanatory comments,
+and leaves everything you have already set alone. A timestamped `.bak-` copy of
+each file is written first, and re-running it is harmless once you are up to
+date.
+
+New settings land at the end of the file, so edit them there if you want
+something other than the defaults.
+
 ### Run it!
 You'll need to be on the desktop, in a terminal program.
 
