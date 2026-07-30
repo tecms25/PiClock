@@ -3753,8 +3753,9 @@ def add_scrim(x, y, w_, h_, gradient):
 
 
 def add_scrims():
-    """Darken the edges where text lives: left weather block, right forecast
-    column, top and bottom bands."""
+    """Darken the edges where text lives: the left weather block, the right
+    forecast column, and a bottom band. The classic layout also gets a top
+    band, for the day/date it runs across the top."""
     o = max(0, min(255, int(Config.scrim_opacity)))
     if o == 0:
         return
@@ -3766,9 +3767,13 @@ def add_scrims():
               'qlineargradient(x1:0, y1:0, x2:1, y2:0,'
               ' stop:0 rgba(0,0,0,0), stop:0.35 rgba(0,0,0,%d), stop:1 rgba(0,0,0,%d))'
               % (int(o * 0.59), o))
-    add_scrim(0, 0, width, height * 0.23,
-              'qlineargradient(x1:0, y1:0, x2:0, y2:1,'
-              ' stop:0 rgba(0,0,0,%d), stop:1 rgba(0,0,0,0))' % int(o * 0.95))
+    # Only classic needs a top band, since it runs the day/date across the top.
+    # In 'photo' the top holds only the alert (opaque on its own) and the side
+    # columns, which the left/right scrims already cover.
+    if Config.layout != 'photo':
+        add_scrim(0, 0, width, height * 0.23,
+                  'qlineargradient(x1:0, y1:0, x2:0, y2:1,'
+                  ' stop:0 rgba(0,0,0,%d), stop:1 rgba(0,0,0,0))' % int(o * 0.95))
     # The 'photo' layout stacks time/date/sun-moon along the bottom, so its
     # gradient has to start higher than the classic footer alone needs.
     band_top = 0.68 if Config.layout == 'photo' else 0.76
