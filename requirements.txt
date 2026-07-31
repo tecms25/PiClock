@@ -3,4 +3,4 @@ metar>=2.0.1
 pytz>=2026.3
 tzlocal>=5.4.4
 tzfpy>=1.3.2
-pyobjc-framework-Cocoa>=10.0; sys_platform == "darwin"
+pyobjc-framework-Cocoa>=12.2.1; sys_platform == "darwin"
