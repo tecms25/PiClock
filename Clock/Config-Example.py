@@ -75,6 +75,12 @@ blueiris_show_seconds = 20  # how long the camera stays on screen
 # Width Blue Iris scales the stream to before sending it. Lower this if the
 # clock stutters while a camera is up; the Pi decodes every frame.
 blueiris_stream_width = 640
+# Accept the camera stream's certificate even when it fails validation, for a
+# Blue Iris using a self-signed certificate or one whose name does not match
+# the address here. This applies to the camera stream only - weather and radar
+# go on checking certificates properly. Whatever gets waved through is named in
+# the log, so leave this off unless the stream will not connect without it.
+blueiris_ignore_ssl_errors = 0
 # Optional source address allow-list, e.g. ['192.168.1.10'] for the Blue Iris
 # machine. Empty list accepts an alert from anywhere on the network.
 blueiris_allow_from = []

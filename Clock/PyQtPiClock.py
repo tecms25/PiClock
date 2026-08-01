@@ -2402,13 +2402,27 @@ class MjpegStream(QtCore.QObject):
         self._reply = None
         self._buffer = b''
 
-    def start(self, url):
+    def start(self, url, ignore_ssl_errors=False):
         self.stop()
         request = QNetworkRequest(QUrl(url))
         request.setRawHeader(b'User-Agent', b'PiClock/1.0')
-        self._reply = manager.get(request)
-        self._reply.readyRead.connect(self._on_ready_read)
-        self._reply.finished.connect(self._on_finished)
+        reply = manager.get(request)
+        self._reply = reply
+        if ignore_ssl_errors:
+            # Bound to this one request, so the weather and radar fetches go on
+            # validating certificates as normal.
+            reply.sslErrors.connect(
+                lambda errors, r=reply: self._ignore_ssl_errors(r, errors))
+        reply.readyRead.connect(self._on_ready_read)
+        reply.finished.connect(self._on_finished)
+
+    def _ignore_ssl_errors(self, reply, errors):
+        """Accept a certificate Qt objected to, and say which objection was
+        waved through: a stream that works for the wrong reason should not be
+        silent about it."""
+        for error in errors:
+            print('WARNING: camera stream TLS problem ignored: %s' % error.errorString())
+        reply.ignoreSslErrors()
 
     def stop(self):
         self._buffer = b''
@@ -2521,7 +2535,8 @@ class CameraPanel(QtWidgets.QFrame):
         self.video_label.setText('Connecting to camera...')
 
         if url:
-            self.stream.start(url)
+            self.stream.start(
+                url, bool(getattr(Config, 'blueiris_ignore_ssl_errors', 0)))
         else:
             self.video_label.setText('blueiris_server is not set in Config.py')
 
@@ -2705,8 +2720,10 @@ def blueiris_stream_url(camera):
         return None
     if '://' not in server:
         server = 'http://' + server
-    url = '%s/mjpg/%s?w=%d' % (server, quote(camera),
-                               int(getattr(Config, 'blueiris_stream_width', 640)))
+    # Blue Iris serves motion JPEG at /mjpg/<camera>/video.mjpg. Without the
+    # trailing video.mjpg it bounces to its login page instead of streaming.
+    url = '%s/mjpg/%s/video.mjpg?w=%d' % (
+        server, quote(camera), int(getattr(Config, 'blueiris_stream_width', 640)))
     user = getattr(Config, 'blueiris_user', '') or ''
     if user:
         url += '&user=%s&pw=%s' % (quote(user),
