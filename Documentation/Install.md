@@ -509,6 +509,8 @@ Settings:
   * `blueiris_show_seconds` - how long the camera stays up
   * `blueiris_stream_width` - width Blue Iris scales the stream to before sending
   * `blueiris_allow_from` - optional source address allow-list
+  * `blueiris_ignore_ssl_errors` - accept a certificate that fails validation
+  * `blueiris_use_session_login` - sign in via the JSON interface (see below)
 
 In Blue Iris, open the camera's settings, go to **Alerts**, and add an
 **On alert** action of **Web request**. Point it at the clock:
@@ -543,6 +545,38 @@ A note on the listener: it accepts a request from anywhere on your network
 unless you set `blueiris_token` (and optionally `blueiris_allow_from`). Set the
 token. It is the only thing stopping something else on the LAN putting a camera
 on your wall.
+
+##### Reaching Blue Iris when it wants a login
+How PiClock authenticates to Blue Iris depends on one Blue Iris setting: **Use
+secure session keys and login page**, on the Advanced page of
+Settings/Webserver.
+
+  * **Switched off** - Blue Iris accepts `user`/`pw` straight on the stream URL,
+    so setting `blueiris_user` and `blueiris_password` is all you need.
+  * **Switched on** (the default, and the safer choice) - that is refused, and
+    the stream has to carry a session key instead. Set
+    `blueiris_use_session_login = 1` and PiClock signs in through the Blue Iris
+    JSON interface first: it asks `/json` for a challenge, answers with
+    `MD5("user:session:password")`, and puts the session key it gets back on the
+    stream request. The key is kept between alerts, so a camera does not pay for
+    a login every time, and if it is ever refused PiClock signs in again once
+    before reporting a problem.
+
+If Blue Iris is on the same network as the clock, point `blueiris_server` at its
+LAN address. Camera video then never leaves your network, there is no
+certificate to validate, and any reverse proxy in front of the public hostname
+is out of the picture. Reach for `blueiris_use_session_login` and
+`blueiris_ignore_ssl_errors` when the clock has to come in from outside.
+
+`blueiris_ignore_ssl_errors = 1` accepts a certificate that fails validation -
+self-signed, or issued for a different name than you are connecting to. It
+applies to the camera stream and its login only; the weather, radar and photo
+fetches go on checking certificates properly. Whatever gets waved through is
+named in the log:
+
+```
+WARNING: camera stream TLS problem ignored: The certificate is self-signed, and untrusted
+```
 
 #### Screen brightness and always-on display
 PiClock can automatically dim the whole display at night and brighten it back

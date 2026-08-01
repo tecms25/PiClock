@@ -2401,9 +2401,11 @@ class MjpegStream(QtCore.QObject):
         QtCore.QObject.__init__(self, parent)
         self._reply = None
         self._buffer = b''
+        self._checked = False
 
     def start(self, url, ignore_ssl_errors=False):
         self.stop()
+        self._checked = False
         request = QNetworkRequest(QUrl(url))
         request.setRawHeader(b'User-Agent', b'PiClock/1.0')
         reply = manager.get(request)
@@ -2443,6 +2445,21 @@ class MjpegStream(QtCore.QObject):
         try:
             if self._reply is None:
                 return
+            if not self._checked:
+                self._checked = True
+                content_type = str(self._reply.header(
+                    QNetworkRequest.KnownHeaders.ContentTypeHeader) or '')
+                if 'multipart' not in content_type.lower():
+                    # An unauthenticated request is redirected to the Blue Iris
+                    # login page, which arrives as a perfectly good HTML 200.
+                    # Nothing else would notice, so the panel would sit on
+                    # "Connecting..." forever without this.
+                    self.failed.emit(
+                        'not a video stream (server sent "%s") - check the Blue '
+                        'Iris credentials and blueiris_use_session_login'
+                        % (content_type or 'no content type'))
+                    self.stop()
+                    return
             self._buffer += bytes(self._reply.readAll())
             while True:
                 start = self._buffer.find(self.SOI)
@@ -2521,24 +2538,35 @@ class CameraPanel(QtWidgets.QFrame):
         self._shown = False
         self._slideshow_was_paused = None
 
+        self._camera = ''
+        self._retried = False
+
         self.stream = MjpegStream(self)
         self.stream.frame.connect(self._on_frame)
         self.stream.failed.connect(self._on_failed)
+
+        self.session = BlueIrisSession(self)
+        self.session.ready.connect(lambda key: self._start_stream())
+        self.session.failed.connect(
+            lambda message: self.video_label.setText('Blue Iris login failed\n' + message))
 
         self.dismiss_timer = QtCore.QTimer(self)
         self.dismiss_timer.setSingleShot(True)
         self.dismiss_timer.timeout.connect(self.dismiss)
 
-    def show_camera(self, url, seconds):
+    def show_camera(self, camera, seconds):
         """Put a camera up. A second alert while one is already showing swaps
         to the new camera and restarts the countdown, rather than queueing."""
+        self._camera = camera
+        self._retried = False
         self.video_label.setText('Connecting to camera...')
 
-        if url:
-            self.stream.start(
-                url, bool(getattr(Config, 'blueiris_ignore_ssl_errors', 0)))
+        if getattr(Config, 'blueiris_use_session_login', 0) and not self.session.key:
+            # Sign in first; _start_stream() runs off the session's ready signal.
+            self.video_label.setText('Signing in to Blue Iris...')
+            self.session.acquire()
         else:
-            self.video_label.setText('blueiris_server is not set in Config.py')
+            self._start_stream()
 
         self.dismiss_timer.start(int(max(1, seconds) * 1000))
         self._pause_slideshow()
@@ -2595,8 +2623,24 @@ class CameraPanel(QtWidgets.QFrame):
             Qt.TransformationMode.SmoothTransformation)
         self.video_label.setPixmap(pixmap)
 
+    def _start_stream(self):
+        url = blueiris_stream_url(self._camera, self.session.key)
+        if not url:
+            self.video_label.setText('blueiris_server is not set in Config.py')
+            return
+        self.stream.start(url, bool(getattr(Config, 'blueiris_ignore_ssl_errors', 0)))
+
     def _on_failed(self, message):
         print('ERROR: Blue Iris stream: ' + message)
+        # A session that has expired looks exactly like a refused one, so drop
+        # it and sign in again once before giving up.
+        if (self.session.key and not self._retried and self._shown
+                and self.video_label.pixmap().isNull()):
+            self._retried = True
+            self.session.clear()
+            self.video_label.setText('Signing in to Blue Iris again...')
+            self.session.acquire()
+            return
         if self._shown and self.video_label.pixmap().isNull():
             self.video_label.setText('Camera unavailable\n' + message)
 
@@ -2713,22 +2757,146 @@ class BlueIrisListener(QtCore.QObject):
         sock.deleteLater()
 
 
-def blueiris_stream_url(camera):
-    """MJPEG URL for one camera, scaled down by Blue Iris rather than the Pi."""
+def blueiris_server_url():
+    """Base URL of the Blue Iris web server, or '' if it is not configured."""
     server = (getattr(Config, 'blueiris_server', '') or '').rstrip('/')
+    if server and '://' not in server:
+        server = 'http://' + server
+    return server
+
+
+def blueiris_stream_url(camera, session=''):
+    """MJPEG URL for one camera, scaled down by Blue Iris rather than the Pi.
+
+    Which credentials belong on the URL depends on how the Blue Iris web server
+    is set up. With "use secure session keys and login page" switched off it
+    takes user/pw directly (manual p268); with it on, that is refused and a
+    session key from BlueIrisSession has to be carried instead.
+    """
+    server = blueiris_server_url()
     if not server or not camera:
         return None
-    if '://' not in server:
-        server = 'http://' + server
-    # Blue Iris serves motion JPEG at /mjpg/<camera>/video.mjpg. Without the
-    # trailing video.mjpg it bounces to its login page instead of streaming.
+    # Blue Iris serves motion JPEG at /mjpg/<camera>/video.mjpg (manual p262).
+    # Without the trailing video.mjpg it bounces to its login page.
     url = '%s/mjpg/%s/video.mjpg?w=%d' % (
         server, quote(camera), int(getattr(Config, 'blueiris_stream_width', 640)))
+    if session:
+        url += '&session=%s' % quote(session)
+        return url
     user = getattr(Config, 'blueiris_user', '') or ''
     if user:
         url += '&user=%s&pw=%s' % (quote(user),
                                    quote(getattr(Config, 'blueiris_password', '') or ''))
     return url
+
+
+class BlueIrisSession(QtCore.QObject):
+    """Logs in to the Blue Iris JSON interface and holds the session key.
+
+    The exchange is the one on p269 of the Blue Iris manual:
+
+        POST /json  {"cmd":"login"}
+          -> {"result":"fail","session":"<key>"}
+        POST /json  {"cmd":"login","session":"<key>",
+                     "response": MD5("user:<key>:password")}
+          -> {"result":"success", ...}
+
+    The key is kept until something rejects it, so a camera popping up does not
+    pay for a login every time.
+    """
+
+    ready = QtCore.pyqtSignal(str)
+    failed = QtCore.pyqtSignal(str)
+
+    def __init__(self, parent=None):
+        QtCore.QObject.__init__(self, parent)
+        self.key = ''
+        self._reply = None
+        self._busy = False
+
+    def clear(self):
+        """Forget the key, so the next camera logs in afresh."""
+        self.key = ''
+
+    def acquire(self):
+        if self._busy:
+            return  # a login is already in flight; its signal covers us both
+        if not blueiris_server_url():
+            self.failed.emit('blueiris_server is not set in Config.py')
+            return
+        if not (getattr(Config, 'blueiris_user', '') or ''):
+            self.failed.emit('blueiris_user is not set in Config.py')
+            return
+        self._busy = True
+        self._post({'cmd': 'login'}, self._challenged)
+
+    def _post(self, payload, handler):
+        request = QNetworkRequest(QUrl(blueiris_server_url() + '/json'))
+        request.setRawHeader(b'User-Agent', b'PiClock/1.0')
+        request.setHeader(QNetworkRequest.KnownHeaders.ContentTypeHeader,
+                          'application/json')
+        reply = manager.post(request, json.dumps(payload).encode('utf-8'))
+        if getattr(Config, 'blueiris_ignore_ssl_errors', 0):
+            reply.sslErrors.connect(lambda errors, r=reply: r.ignoreSslErrors())
+        reply.finished.connect(lambda r=reply: handler(r))
+        self._reply = reply
+
+    def _read(self, reply):
+        """Return the parsed body, or None having already reported why not."""
+        reply.deleteLater()
+        if reply.error() != QNetworkReply.NetworkError.NoError:
+            self._give_up(reply.errorString())
+            return None
+        try:
+            return json.loads(str(bytes(reply.readAll()), 'utf-8'))
+        except ValueError:
+            # A login page instead of JSON usually means the URL reached
+            # something other than the Blue Iris web server.
+            self._give_up('Blue Iris did not return JSON from /json')
+            return None
+
+    def _challenged(self, reply):
+        try:
+            data = self._read(reply)
+            if data is None:
+                return
+            session = data.get('session') or ''
+            if not session:
+                self._give_up('no session key in the Blue Iris login response')
+                return
+            user = getattr(Config, 'blueiris_user', '') or ''
+            password = getattr(Config, 'blueiris_password', '') or ''
+            digest = hashlib.md5(
+                ('%s:%s:%s' % (user, session, password)).encode('utf-8')).hexdigest()
+            self._post({'cmd': 'login', 'session': session, 'response': digest},
+                       self._answered)
+        except Exception:
+            print('WARNING:', traceback.format_exc())
+            self._give_up('could not build the Blue Iris login response')
+
+    def _answered(self, reply):
+        try:
+            data = self._read(reply)
+            if data is None:
+                return
+            if str(data.get('result', '')).lower() != 'success':
+                reason = (data.get('data') or {}).get('reason') or 'login refused'
+                self._give_up('Blue Iris %s (check blueiris_user/blueiris_password)'
+                              % reason)
+                return
+            self._busy = False
+            self.key = data.get('session') or ''
+            print('INFO: signed in to Blue Iris')
+            self.ready.emit(self.key)
+        except Exception:
+            print('WARNING:', traceback.format_exc())
+            self._give_up('could not read the Blue Iris login response')
+
+    def _give_up(self, message):
+        self._busy = False
+        self.key = ''
+        print('ERROR: Blue Iris login: ' + message)
+        self.failed.emit(message)
 
 
 def blueiris_alert(params):
@@ -2757,8 +2925,7 @@ def blueiris_alert(params):
         return
 
     print('INFO: camera alert from %s (%s)' % (camera, memo or 'no memo'))
-    cameraPanel.show_camera(blueiris_stream_url(camera),
-                            getattr(Config, 'blueiris_show_seconds', 20))
+    cameraPanel.show_camera(camera, getattr(Config, 'blueiris_show_seconds', 20))
 
 
 class SlideShow(QtWidgets.QLabel):

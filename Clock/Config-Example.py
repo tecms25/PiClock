@@ -71,16 +71,22 @@ blueiris_cameras = []
 # Tapo cameras send text like 'People' or 'IsPet', so ['People'] shows a person
 # at the door and ignores the cat. Empty list means any alert.
 blueiris_triggers = []
-blueiris_show_seconds = 20  # how long the camera stays on screen
+blueiris_show_seconds = 45  # how long the camera stays on screen
 # Width Blue Iris scales the stream to before sending it. Lower this if the
 # clock stutters while a camera is up; the Pi decodes every frame.
-blueiris_stream_width = 640
+blueiris_stream_width = 1080
 # Accept the camera stream's certificate even when it fails validation, for a
 # Blue Iris using a self-signed certificate or one whose name does not match
 # the address here. This applies to the camera stream only - weather and radar
 # go on checking certificates properly. Whatever gets waved through is named in
 # the log, so leave this off unless the stream will not connect without it.
 blueiris_ignore_ssl_errors = 0
+# Sign in through the Blue Iris JSON interface instead of putting the user and
+# password on the stream URL. Turn this on when "Use secure session keys and
+# login page" is enabled on the Advanced page of Settings/Webserver in Blue
+# Iris, because that setting makes Blue Iris refuse user/pw on a URL. Needs
+# blueiris_user and blueiris_password set either way.
+blueiris_use_session_login = 0
 # Optional source address allow-list, e.g. ['192.168.1.10'] for the Blue Iris
 # machine. Empty list accepts an alert from anywhere on the network.
 blueiris_allow_from = []
@@ -90,7 +96,7 @@ noaa_alerts_enabled = 1  # 1 to show a warning bubble for active NOAA/NWS alerts
 alert_refresh = 10  # minutes between severe weather alert checks
 # NWS severity levels that trigger the warning bubble; from least to most severe:
 # 'Unknown', 'Minor', 'Moderate', 'Severe', 'Extreme'
-alert_severities = ('Severe', 'Extreme')
+alert_severities = ('Moderate', 'Severe', 'Extreme')
 
 # SlideShow
 useslideshow = 1  # 1 to enable, 0 to disable
