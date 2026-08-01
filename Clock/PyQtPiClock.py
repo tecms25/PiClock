@@ -2017,18 +2017,41 @@ class InfoBubble(QtWidgets.QFrame):
         was rather than jumping back to the start. None restarts the rotation."""
         return None
 
+    def _merge(self, items):
+        """The new list, in the order already on screen.
+
+        Entries still present keep their slot and take the fresh values; new
+        ones join the end. Items with no identity (item_key None) cannot be
+        tracked, so those lists are taken exactly as they come.
+        """
+        incoming = {}
+        for item in items:
+            key = self.item_key(item)
+            if key is not None and key not in incoming:
+                incoming[key] = item
+        if not incoming:
+            return list(items)
+        kept = []
+        for old in self.items:
+            key = self.item_key(old)
+            if key is not None and key in incoming:
+                kept.append(incoming.pop(key))
+        return kept + list(incoming.values())
+
     def set_items(self, items):
         """Replace the list, disturbing what is on screen as little as possible.
 
-        A refresh is not a reason to change what the viewer is reading. Either
-        way the item on screen keeps its slot and its remaining time: if it is
-        still in the new list only its wording is refreshed, and if it has gone
-        it is held until its turn is up rather than being cut off part-read.
+        The running order is kept. The feed re-sorts itself on every poll - an
+        aircraft climbing towards overhead moves up the list - so adopting the
+        new order would drag the rotation to wherever the current item landed
+        and start the cycle again from near the top. Items already listed stay
+        in their slot with only their wording refreshed, new ones join the end,
+        and one that has gone is held until its turn is up.
         """
         showing = None
         on_screen = None
         was_at = self.index
-        if self.items and self.index < len(self.items):
+        if self.items and 0 <= self.index < len(self.items):
             on_screen = self.items[self.index]
             showing = self.item_key(on_screen)
 
@@ -2040,9 +2063,11 @@ class InfoBubble(QtWidgets.QFrame):
             self._update_visibility()
             return
 
+        merged = self._merge(items)
+
         still_here = None
         if showing is not None:
-            for i, item in enumerate(items):
+            for i, item in enumerate(merged):
                 if self.item_key(item) == showing:
                     still_here = i
                     break
@@ -2050,7 +2075,7 @@ class InfoBubble(QtWidgets.QFrame):
         if still_here is not None:
             # Same item: update the wording in place and let its dwell run out
             # on the original schedule.
-            self.items = items
+            self.items = merged
             self.index = still_here
             self._leaving = None
             self._render()
@@ -2060,15 +2085,15 @@ class InfoBubble(QtWidgets.QFrame):
             # On screen, but the feed has dropped it. Cutting straight to
             # another item is what reads as a skip, so hold it in its slot for
             # the rest of its turn; _cycle() drops it on the way out.
-            self.items = list(items)
+            self.items = merged
             self.index = min(was_at, len(self.items))
             self.items.insert(self.index, on_screen)
             self._leaving = on_screen
             self._render()
         else:
             # Nothing was part-read, so pick up where the rotation had reached.
-            self.items = items
-            self.index = min(was_at, len(items) - 1)
+            self.items = merged
+            self.index = min(was_at, len(merged) - 1)
             self._leaving = None
             self.cycle_timer.stop()
             self._show_current()
@@ -2208,8 +2233,10 @@ class FlightBubble(InfoBubble):
 
     def item_key(self, craft):
         """The ICAO24 address is the aircraft's permanent id, so the bubble can
-        stay with the same plane as it moves between refreshes."""
-        return craft.get('icao') or craft.get('callsign')
+        stay with the same plane as it moves between refreshes. None when the
+        feed gave neither, so an unidentified craft is never mistaken for
+        another one that is equally anonymous."""
+        return (craft.get('icao') or craft.get('callsign')) or None
 
     def format_item(self, craft, position, total):
         callsign = craft['callsign'] or craft['registration'] or 'Aircraft'
