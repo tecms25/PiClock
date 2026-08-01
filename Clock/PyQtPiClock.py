@@ -1963,6 +1963,7 @@ class InfoBubble(QtWidgets.QFrame):
         self._anim = None
         self._shown = False
         self._suppressed = False
+        self._leaving = None  # on screen but gone from the feed, see set_items()
 
         # Driven by the ticker finishing rather than a fixed interval, so an
         # item is never swapped out mid-sentence or left replaying.
@@ -1986,20 +1987,22 @@ class InfoBubble(QtWidgets.QFrame):
     def set_items(self, items):
         """Replace the list, disturbing what is on screen as little as possible.
 
-        A refresh is not a reason to change what the viewer is reading. If the
-        item on screen is still in the new list it keeps its place and its
-        remaining time, and only its text is refreshed. If it has gone, the
-        rotation carries on from the same position rather than snapping back
-        to the start.
+        A refresh is not a reason to change what the viewer is reading. Either
+        way the item on screen keeps its slot and its remaining time: if it is
+        still in the new list only its wording is refreshed, and if it has gone
+        it is held until its turn is up rather than being cut off part-read.
         """
         showing = None
+        on_screen = None
         was_at = self.index
         if self.items and self.index < len(self.items):
-            showing = self.item_key(self.items[self.index])
+            on_screen = self.items[self.index]
+            showing = self.item_key(on_screen)
 
-        self.items = items
         if not items:
+            self.items = []
             self.index = 0
+            self._leaving = None
             self.cycle_timer.stop()
             self._update_visibility()
             return
@@ -2014,13 +2017,26 @@ class InfoBubble(QtWidgets.QFrame):
         if still_here is not None:
             # Same item: update the wording in place and let its dwell run out
             # on the original schedule.
+            self.items = items
             self.index = still_here
+            self._leaving = None
             self._render()
             if not self.cycle_timer.isActive():
                 self._arm_cycle()
+        elif showing is not None and self.cycle_timer.isActive():
+            # On screen, but the feed has dropped it. Cutting straight to
+            # another item is what reads as a skip, so hold it in its slot for
+            # the rest of its turn; _cycle() drops it on the way out.
+            self.items = list(items)
+            self.index = min(was_at, len(self.items))
+            self.items.insert(self.index, on_screen)
+            self._leaving = on_screen
+            self._render()
         else:
-            # It has gone. Carry on from where the rotation had reached.
+            # Nothing was part-read, so pick up where the rotation had reached.
+            self.items = items
             self.index = min(was_at, len(items) - 1)
+            self._leaving = None
             self.cycle_timer.stop()
             self._show_current()
         self._update_visibility()
@@ -2035,11 +2051,33 @@ class InfoBubble(QtWidgets.QFrame):
 
     def _update_visibility(self):
         want = bool(self.items) and not self._suppressed
-        if want != self._shown:
-            self._shown = want
-            self._fade(1.0 if want else 0.0)
+        if want == self._shown:
+            return
+        self._shown = want
+        if want:
+            # Start the dwell as the bubble appears. Running it while hidden
+            # would spend the item's turn where nobody could read it.
+            self._arm_cycle()
+        else:
+            self.cycle_timer.stop()
+        self._fade(1.0 if want else 0.0)
 
     def _cycle(self):
+        if self._leaving is not None:
+            # Its turn is up and the feed has already dropped it, so let it go
+            # now. Removing it leaves index pointing at whatever follows.
+            for i, item in enumerate(self.items):
+                if item is self._leaving:
+                    del self.items[i]
+                    break
+            self._leaving = None
+            if not self.items:
+                self.index = 0
+                self._update_visibility()
+                return
+            self.index %= len(self.items)
+            self._show_current()
+            return
         if len(self.items) > 1:
             self.index = (self.index + 1) % len(self.items)
             self._show_current()
@@ -2052,7 +2090,7 @@ class InfoBubble(QtWidgets.QFrame):
         self.ticker.set_text(ticker_text, self._ticker_style)
 
     def _arm_cycle(self):
-        if len(self.items) > 1:
+        if len(self.items) > 1 and self._shown:
             if self.DWELL_MS:
                 self.cycle_timer.start(self.DWELL_MS)
             else:
@@ -2066,7 +2104,7 @@ class InfoBubble(QtWidgets.QFrame):
     def _ticker_finished(self):
         """The line has run in full, so move on after a short beat. Restarting
         the timer here pre-empts the backstop armed in _show_current()."""
-        if len(self.items) > 1:
+        if len(self.items) > 1 and self._shown:
             self.cycle_timer.start(ALERT_CYCLE_PAD_MS)
 
     # -- presentation --------------------------------------------------------
