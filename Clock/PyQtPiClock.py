@@ -4149,8 +4149,10 @@ PHOTO_DATE_H = 46
 PHOTO_CLOCK_H = 100
 PHOTO_TEMP_H = 40
 PHOTO_GAP = 4
-# The alert sits high on the screen, well clear of the bottom block.
-PHOTO_ALERT_TOP = 0.10
+# Both bubbles sit near the very top edge, where the left weather block and
+# right forecast column leave a clear run, so they take as little of the
+# picture as possible. mac_notch_inset keeps them clear of a MacBook notch.
+PHOTO_ALERT_TOP = 0.02
 PHOTO_ALERT_H = 0.075
 
 
@@ -4184,8 +4186,11 @@ def apply_photo_layout():
     bottom.setGeometry(0, int(footer_top * yscale), width, int(PHOTO_FOOTER_H * yscale))
     bottom.setAlignment(Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignVCenter)
 
+    # Both bubbles share this slot; update_bubble_priority() decides which of
+    # them is on screen at any moment.
     for bubble in (alertBubble, flightBubble):
-        bubble.setGeometry(int(width * ALERT_X), int(height * PHOTO_ALERT_TOP),
+        bubble.setGeometry(int(width * ALERT_X),
+                           mac_notch_inset + int(height * PHOTO_ALERT_TOP),
                            int(width * ALERT_W), int(height * PHOTO_ALERT_H))
 
 
