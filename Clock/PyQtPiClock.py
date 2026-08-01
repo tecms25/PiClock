@@ -3628,11 +3628,11 @@ except AttributeError:
     Config.LPrecip1hr = ' Precip 1hr:'
     Config.LToday = 'Today: '
     Config.LSunRise = 'Sun Rise: '
-    Config.LSet = ' Set: '
-    Config.LMoonPhase = ' Moon: '
+    Config.LSet = ' · Set: '
+    Config.LMoonPhase = ' · Moon: '
     Config.LInsideTemp = 'Inside Temp '
-    Config.LRain = ' Rain: '
-    Config.LSnow = ' Snow: '
+    Config.LRain = '· Rain: '
+    Config.LSnow = '· Snow: '
 
 try:
     Config.Lmoon1
