@@ -822,9 +822,9 @@ def wxfinished_tm_current(data=None):
         temper.setText('%.1f' % (tempf2tempc(f['values']['temperature'])) + u'°C')
         temper2.setText('%.1f' % (tempf2tempc(f['values']['temperature'])) + u'°C')
         wind.setText(Config.LWind + wd + ' ' +
-                     '%.1f' % (mph2kph(f['values']['windSpeed'])) + 'km/h' +
+                     '%.1f' % (mph2kph(f['values']['windSpeed'])) + ' km/h ·' +
                      Config.Lgusting +
-                     '%.1f' % (mph2kph(f['values']['windGust'])) + 'km/h')
+                     '%.1f' % (mph2kph(f['values']['windGust'])) + ' km/h')
         feelslike.setText(Config.LFeelslike +
                           '%.1f' % (tempf2tempc(f['values']['temperatureApparent'])) + u'°C')
     else:
@@ -832,7 +832,7 @@ def wxfinished_tm_current(data=None):
         temper2.setText('%.1f' % (f['values']['temperature']) + u'°F')
         wind.setText(Config.LWind +
                      wd + ' ' +
-                     '%.1f' % (f['values']['windSpeed']) + ' mph |' +
+                     '%.1f' % (f['values']['windSpeed']) + ' mph ·' +
                      Config.Lgusting +
                      '%.1f' % (f['values']['windGust']) + ' mph')
         feelslike.setText(Config.LFeelslike +
@@ -1236,9 +1236,10 @@ def wxfinished_metar(data=None):
             temp_str = '%.1f' % f.temp.value('C')
         temp_str += u'°C'
         if f.wind_speed:
-            wind_speed_str += wind_dir_str + ' ' + '%.1f' % f.wind_speed.value('KMH') + 'km/h'
+            wind_speed_str += wind_dir_str + ' ' + '%.1f' % f.wind_speed.value('KMH') + ' km/h'
             if f.wind_gust:
-                wind_speed_str += Config.Lgusting + '%.1f' % f.wind_gust.value('KMH') + 'km/h'
+                wind_speed_str += (' ·' + Config.Lgusting +
+                                   '%.1f' % f.wind_gust.value('KMH') + ' km/h')
         if f.temp and f.dewpt:
             feelslike_str += '%.1f' % tempf2tempc(feels_like(f)) + u'°C'
     else:
@@ -1246,9 +1247,10 @@ def wxfinished_metar(data=None):
             temp_str = '%.1f' % f.temp.value('F')
         temp_str += u'°F'
         if f.wind_speed:
-            wind_speed_str += wind_dir_str + ' ' + '%.1f' % f.wind_speed.value('MPH') + 'mph'
+            wind_speed_str += wind_dir_str + ' ' + '%.1f' % f.wind_speed.value('MPH') + ' mph'
             if f.wind_gust:
-                wind_speed_str += Config.Lgusting + '%.1f' % f.wind_gust.value('MPH') + 'mph'
+                wind_speed_str += (' ·' + Config.Lgusting +
+                                   '%.1f' % f.wind_gust.value('MPH') + ' mph')
         if f.temp and f.dewpt:
             feelslike_str += '%.1f' % feels_like(f) + u'°F'
 
@@ -2324,7 +2326,7 @@ class AlertDetailPanel(QtWidgets.QFrame):
         if alert.get('expires'):
             times.append('Until {0:%a %-I:%M %p}'.format(alert['expires']))
         if times:
-            meta_bits.append(' | '.join(times))
+            meta_bits.append(' · '.join(times))
         badges = [b for b in (alert.get('severity'), alert.get('urgency'), alert.get('certainty')) if b]
         if badges:
             meta_bits.append(' · '.join(badges))
