@@ -2377,7 +2377,7 @@ class SlideShow(QtWidgets.QLabel):
         QtWidgets.QLabel.__init__(self, parent)
 
         self.pause = False
-        self.count = 0
+        self.count = -1  # index on screen; -1 until the first image is shown
         self.img_list = []  # local file paths, in display order
         self.img_inc = 1
         self.list_reply = None
@@ -2437,8 +2437,7 @@ class SlideShow(QtWidgets.QLabel):
             self.playlist_timer.timeout.connect(self.refresh_playlist)
             self.playlist_timer.start(int(1000 * SLIDESHOW_PLAYLIST_REFRESH_SEC))
         else:
-            self.scan_local_images()
-            self.switch_image()
+            self.scan_local_images()  # set_playlist() puts the first image up
 
     def stop(self):
         try:
@@ -2452,9 +2451,60 @@ class SlideShow(QtWidgets.QLabel):
             self.playlist_timer = None
 
     def switch_image(self):
-        if self.img_list and not self.pause:
-            self.count = (self.count + self.img_inc) % len(self.img_list)
-            self.display_image(self.img_list[self.count])
+        if not self.img_list or self.pause:
+            return
+        self.count += self.img_inc
+        if self.count >= len(self.img_list):
+            # Pass complete: every photo has had exactly one turn, so reshuffle
+            # and start the next. Reshuffling any more often than this is what
+            # leaves some photos coming up far more than others.
+            random.shuffle(self.img_list)
+            self.count = 0
+        elif self.count < 0:
+            # Stepped back past the start. Wrap without reshuffling, so a tap
+            # of the back button doesn't reorder the pass in progress.
+            self.count = len(self.img_list) - 1
+        self.display_image(self.img_list[self.count])
+
+    def set_playlist(self, paths):
+        """Merge a freshly fetched set of images into the running rotation.
+
+        A refresh is not a reason to restart the slideshow. Rebuilding the list
+        would begin a new pass every time, and with more photos than one refresh
+        period can show, the ones late in the order would never be reached while
+        the rest came round again. Photos already queued keep their place, new
+        ones are slotted into what is left of this pass, and the photo on screen
+        keeps its remaining time.
+        """
+        showing = (self.img_list[self.count]
+                   if 0 <= self.count < len(self.img_list) else None)
+        wanted = set(paths)
+        kept = [p for p in self.img_list if p in wanted]
+        known = set(kept)
+        fresh = [p for p in paths if p not in known]
+        random.shuffle(fresh)
+
+        if not kept:
+            # First load, or nothing survived: start a clean pass.
+            self.img_list = fresh
+            self.count = -1
+        else:
+            self.img_list = kept
+            if showing is not None and showing in wanted:
+                self.count = self.img_list.index(showing)
+            else:
+                self.count = min(self.count, len(self.img_list) - 1)
+            # Only ever insert after the current position: anything at or below
+            # it would shift the photo on screen out from under count, showing
+            # it twice and skipping its neighbour.
+            for path in fresh:
+                self.img_list.insert(
+                    random.randint(self.count + 1, len(self.img_list)), path)
+
+        # Start the slideshow only if nothing is up yet; a refresh must not cut
+        # short the photo currently on screen.
+        if self.img_list and self.count < 0:
+            self.switch_image()
 
     def display_image(self, path):
         # Read through QImageReader with autoTransform so EXIF orientation is
@@ -2522,9 +2572,7 @@ class SlideShow(QtWidgets.QLabel):
             files = []
         if not files:
             print(f"WARNING: No slideshow images found in {SLIDESHOW_LOCAL_DIR}")
-        random.shuffle(files)
-        self.img_list = files
-        self.count = 0
+        self.set_playlist(files)
 
     @staticmethod
     def cache_filename_for_url(url):
@@ -2573,11 +2621,7 @@ class SlideShow(QtWidgets.QLabel):
         ]
 
         cached = [cache_path(fname) for fname in wanted if os.path.exists(cache_path(fname))]
-        random.shuffle(cached)
-        self.img_list = cached
-        self.count = 0
-        if self.img_list:
-            self.switch_image()
+        self.set_playlist(cached)
 
         if self.pending_downloads:
             print(f"SLIDESHOW: downloading {len(self.pending_downloads)} new image(s)")
@@ -2608,11 +2652,13 @@ class SlideShow(QtWidgets.QLabel):
                 print(f"ERROR: Unable to save slideshow image {dest}: {e}")
                 self._download_next_pending()
                 return
-            # Slot each new image in at random rather than appending: photos
-            # are fetched in a deliberate order (newest first for iCloud), so
-            # appending would play the whole album back in that same order.
-            self.img_list.insert(random.randint(0, len(self.img_list)), dest)
-            if len(self.img_list) == 1:
+            # Slot each new image into the part of the pass still to come,
+            # rather than appending: photos are fetched in a deliberate order
+            # (newest first for iCloud), so appending would play the whole
+            # album back in that same order.
+            self.img_list.insert(
+                random.randint(self.count + 1, len(self.img_list)), dest)
+            if self.count < 0:
                 self.switch_image()
         if self.pending_downloads:
             self._download_next_pending()
@@ -2633,11 +2679,8 @@ class SlideShow(QtWidgets.QLabel):
             return
         if not files:
             return
-        random.shuffle(files)
-        self.img_list = files
-        self.count = 0
         print(f"SLIDESHOW: {len(files)} image(s) already cached")
-        self.switch_image()
+        self.set_playlist(files)
 
     def _icloud_post(self, path, payload, on_finished):
         global manager
@@ -2704,11 +2747,7 @@ class SlideShow(QtWidgets.QLabel):
                 photo['dest'] = dest
                 missing.append(photo)
 
-        random.shuffle(cached)
-        self.img_list = cached
-        self.count = 0
-        if cached:
-            self.switch_image()
+        self.set_playlist(cached)
 
         self.icloud_queue = missing
         print(f'SLIDESHOW: iCloud album has {len(photos)} photo(s); '
@@ -2756,9 +2795,12 @@ class SlideShow(QtWidgets.QLabel):
         self.pause = not self.pause
 
     def prev_next(self, direction):
+        """Step one image in `direction`, then carry on forwards. Leaving
+        img_inc reversed would run the rest of the slideshow backwards."""
         self.img_inc = direction
         self.timer.stop()
         self.switch_image()
+        self.img_inc = 1
         self.timer.start()
 
 # Global RainViewer metadata cache (shared by all Radar instances)
