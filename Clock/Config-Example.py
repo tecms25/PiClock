@@ -72,6 +72,11 @@ blueiris_cameras = []
 # at the door and ignores the cat. Empty list means any alert.
 blueiris_triggers = []
 blueiris_show_seconds = 45  # how long the camera stays on screen
+# How many cameras may be on screen at once, 1 to 6. When more alert together
+# the panel divides itself - one camera fills it, two sit side by side, then a
+# 2x2 grid, then 2x3. Each keeps its own countdown and drops off on its own.
+# Beyond this the oldest picture gives way to the newest alert.
+blueiris_max_cameras = 6
 # Width Blue Iris scales the stream to before sending it. Lower this if the
 # clock stutters while a camera is up; the Pi decodes every frame.
 blueiris_stream_width = 1080

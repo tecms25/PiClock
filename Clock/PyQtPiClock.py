@@ -2438,6 +2438,9 @@ class MjpegStream(QtCore.QObject):
             print('WARNING: camera stream TLS problem ignored: %s' % error.errorString())
         reply.ignoreSslErrors()
 
+    def is_active(self):
+        return self._reply is not None
+
     def stop(self):
         self._buffer = b''
         if self._reply is None:
@@ -2504,10 +2507,68 @@ class MjpegStream(QtCore.QObject):
             print('WARNING:', traceback.format_exc())
 
 
-class CameraPanel(QtWidgets.QFrame):
-    """Large panel that puts a Blue Iris camera on screen when it trips an
-    alert, then fades back out (see blueiris_alert()). Tap it to dismiss early.
+class CameraTile(QtCore.QObject):
+    """One camera in the grid: its own picture, stream and countdown.
+
+    Each alert runs to its own clock, so cameras that fired at different times
+    drop off when their own time is up rather than all going at once.
     """
+
+    expired = QtCore.pyqtSignal(object)
+    lost = QtCore.pyqtSignal(object, str)
+
+    def __init__(self, parent_widget, camera, style):
+        QtCore.QObject.__init__(self, parent_widget)
+        self.camera = camera
+        self.requested_width = 0
+        self.retried = False
+
+        self.label = QtWidgets.QLabel(parent_widget)
+        self.label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.label.setWordWrap(True)
+        self.label.setStyleSheet(style)
+        self.label.show()
+
+        self.stream = MjpegStream(self)
+        self.stream.frame.connect(self._on_frame)
+        self.stream.failed.connect(lambda message: self.lost.emit(self, message))
+
+        self.timer = QtCore.QTimer(self)
+        self.timer.setSingleShot(True)
+        self.timer.timeout.connect(lambda: self.expired.emit(self))
+
+    def has_picture(self):
+        return not self.label.pixmap().isNull()
+
+    def say(self, text):
+        self.label.setPixmap(QPixmap())  # drop any stale frame behind the text
+        self.label.setText(text)
+
+    def _on_frame(self, image):
+        self.label.setPixmap(QPixmap.fromImage(image).scaled(
+            self.label.size(),
+            Qt.AspectRatioMode.KeepAspectRatio,
+            Qt.TransformationMode.SmoothTransformation))
+
+    def close(self):
+        self.timer.stop()
+        self.stream.stop()
+        self.label.hide()
+        self.label.deleteLater()
+
+
+class CameraPanel(QtWidgets.QFrame):
+    """Large panel showing the Blue Iris cameras currently in alert, then
+    fading back out (see blueiris_alert()). Tap it to dismiss early.
+
+    More than one camera can be up at once; the grid divides to fit and each
+    camera keeps its own countdown.
+    """
+
+    # cameras -> (columns, rows). Splits along the long edge first, so two
+    # cameras sit side by side rather than stacked.
+    GRID = {1: (1, 1), 2: (2, 1), 3: (2, 2), 4: (2, 2), 5: (3, 2), 6: (3, 2)}
+    MAX_TILES = 6
 
     def __init__(self, parent, screen_width, screen_height):
         QtWidgets.QFrame.__init__(self, parent)
@@ -2522,7 +2583,9 @@ class CameraPanel(QtWidgets.QFrame):
         card_h = int(screen_height * 0.93)
         card_x = int((screen_width - card_w) / 2)
         card_y = int((screen_height - card_h) / 2)
-        pad = int(card_w * 0.018)
+        self._pad = int(card_w * 0.018)
+        self._gap = max(2, int(card_w * 0.006))
+        self._card_w, self._card_h = card_w, card_h
 
         self.card = QtWidgets.QFrame(self)
         self.card.setObjectName('cameraCard')
@@ -2535,10 +2598,7 @@ class CameraPanel(QtWidgets.QFrame):
 
         # The picture and nothing else: no camera name, no trigger text, no
         # clock. Whatever the camera itself burns in is all that shows.
-        self.video_label = QtWidgets.QLabel(self.card)
-        self.video_label.setGeometry(pad, pad, card_w - pad * 2, card_h - pad * 2)
-        self.video_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.video_label.setStyleSheet(
+        self._tile_style = (
             'background-color: rgba(0, 0, 0, 255); color: #888888; '
             'font-family:"Open Sans"; border-radius: 6px; '
             'font-size: ' + str(int(16 * xscale)) + 'px;')
@@ -2549,38 +2609,32 @@ class CameraPanel(QtWidgets.QFrame):
         self._anim = None
         self._shown = False
         self._slideshow_was_paused = None
-
-        self._camera = ''
-        self._retried = False
-
-        self.stream = MjpegStream(self)
-        self.stream.frame.connect(self._on_frame)
-        self.stream.failed.connect(self._on_failed)
+        self.tiles = []  # oldest first
 
         self.session = BlueIrisSession(self)
-        self.session.ready.connect(lambda key: self._start_stream())
-        self.session.failed.connect(
-            lambda message: self.video_label.setText('Blue Iris login failed\n' + message))
+        self.session.ready.connect(self._on_session_ready)
+        self.session.failed.connect(self._on_session_failed)
 
-        self.dismiss_timer = QtCore.QTimer(self)
-        self.dismiss_timer.setSingleShot(True)
-        self.dismiss_timer.timeout.connect(self.dismiss)
+    # -- showing cameras ------------------------------------------------------
 
     def show_camera(self, camera, seconds):
-        """Put a camera up. A second alert while one is already showing swaps
-        to the new camera and restarts the countdown, rather than queueing."""
-        self._camera = camera
-        self._retried = False
-        self.video_label.setText('Connecting to camera...')
+        """Add a camera to the grid, or restart its countdown if already up."""
+        tile = self._find(camera)
+        if tile is None:
+            if len(self.tiles) >= self._max_tiles():
+                # Full. The newest alert matters more than the oldest picture.
+                oldest = self.tiles.pop(0)
+                print('INFO: camera grid full, dropping %s' % oldest.camera)
+                oldest.close()
+            tile = CameraTile(self.card, camera, self._tile_style)
+            tile.expired.connect(self._on_expired)
+            tile.lost.connect(self._on_lost)
+            tile.say('Connecting to %s...' % camera)
+            self.tiles.append(tile)
+            self._relayout()
+            self._begin(tile)
+        tile.timer.start(int(max(1, seconds) * 1000))
 
-        if getattr(Config, 'blueiris_use_session_login', 0) and not self.session.key:
-            # Sign in first; _start_stream() runs off the session's ready signal.
-            self.video_label.setText('Signing in to Blue Iris...')
-            self.session.acquire()
-        else:
-            self._start_stream()
-
-        self.dismiss_timer.start(int(max(1, seconds) * 1000))
         self._pause_slideshow()
         # Raising above every sibling puts this over brightness_overlay too, so
         # the camera shows in true colour however far the night dimming has the
@@ -2593,16 +2647,118 @@ class CameraPanel(QtWidgets.QFrame):
             self._fade(1.0)
 
     def dismiss(self):
+        """Close the whole panel, however many cameras are up."""
         if not self._shown:
             return
         self._shown = False
-        self.dismiss_timer.stop()
-        self.stream.stop()
+        for tile in self.tiles:
+            tile.close()
+        self.tiles = []
         self._resume_slideshow()
         self._fade(0.0)
 
     def mousePressEvent(self, event):
         self.dismiss()
+
+    def _find(self, camera):
+        for tile in self.tiles:
+            if tile.camera == camera:
+                return tile
+        return None
+
+    def _max_tiles(self):
+        return max(1, min(self.MAX_TILES,
+                          int(getattr(Config, 'blueiris_max_cameras', self.MAX_TILES))))
+
+    def _on_expired(self, tile):
+        """One camera's time is up. The rest carry on, and the grid closes in
+        around the gap."""
+        if tile not in self.tiles:
+            return
+        self.tiles.remove(tile)
+        tile.close()
+        if not self.tiles:
+            self.dismiss()
+            return
+        self._relayout()
+
+    # -- layout ---------------------------------------------------------------
+
+    def _relayout(self):
+        """Divide the card between however many cameras are up."""
+        count = len(self.tiles)
+        if not count:
+            return
+        cols, rows = self.GRID[min(count, self.MAX_TILES)]
+        inner_w = self._card_w - self._pad * 2
+        inner_h = self._card_h - self._pad * 2
+        cell_w = (inner_w - self._gap * (cols - 1)) // cols
+        cell_h = (inner_h - self._gap * (rows - 1)) // rows
+        for index, tile in enumerate(self.tiles):
+            col, row = index % cols, index // cols
+            tile.label.setGeometry(self._pad + col * (cell_w + self._gap),
+                                   self._pad + row * (cell_h + self._gap),
+                                   cell_w, cell_h)
+            self._resize_stream(tile, cell_w, inner_w)
+
+    def _resize_stream(self, tile, cell_w, inner_w):
+        """Ask Blue Iris for a frame that suits the cell.
+
+        blueiris_stream_width is the width for a camera on its own; a cell in a
+        grid of six needs a third of that, and asking for more would just spend
+        Pi time scaling it back down. Only worth a reconnect when the cell has
+        changed size substantially, so a burst of alerts does not restart every
+        stream several times over.
+        """
+        full = int(getattr(Config, 'blueiris_stream_width', 640))
+        wanted = max(160, int(full * cell_w / float(inner_w)))
+        if not tile.requested_width:
+            tile.requested_width = wanted
+            return
+        ratio = float(wanted) / tile.requested_width
+        if 0.7 < ratio < 1.4:
+            return  # close enough; Qt's scaling covers the difference
+        tile.requested_width = wanted
+        if tile.has_picture() or tile.stream.is_active():
+            self._begin(tile)
+
+    # -- streams --------------------------------------------------------------
+
+    def _begin(self, tile):
+        """Start (or restart) one tile's stream, signing in first if needed."""
+        if getattr(Config, 'blueiris_use_session_login', 0) and not self.session.key:
+            tile.say('Signing in to Blue Iris...')
+            self.session.acquire()  # _on_session_ready starts whatever is waiting
+            return
+        url = blueiris_stream_url(tile.camera, self.session.key, tile.requested_width)
+        if not url:
+            tile.say('blueiris_server is not set in Config.py')
+            return
+        tile.stream.start(url, bool(getattr(Config, 'blueiris_ignore_ssl_errors', 0)))
+
+    def _on_session_ready(self, key):
+        for tile in self.tiles:
+            if not tile.has_picture():
+                self._begin(tile)
+
+    def _on_session_failed(self, message):
+        for tile in self.tiles:
+            if not tile.has_picture():
+                tile.say('Blue Iris login failed\n' + message)
+
+    def _on_lost(self, tile, message):
+        print('ERROR: Blue Iris stream (%s): %s' % (tile.camera, message))
+        if tile not in self.tiles or tile.has_picture():
+            return
+        # A session that has expired looks exactly like a refused one, so drop
+        # it and sign in again once before giving up.
+        if self.session.key and not tile.retried:
+            tile.retried = True
+            self.session.clear()
+            tile.say('Signing in to Blue Iris again...')
+            self.session.acquire()
+            return
+        tile.say('%s unavailable\n%s' % (tile.camera, message))
 
     # -- slideshow ------------------------------------------------------------
 
@@ -2627,38 +2783,6 @@ class CameraPanel(QtWidgets.QFrame):
         except Exception:
             print('WARNING:', traceback.format_exc())
         self._slideshow_was_paused = None
-
-    # -- stream ---------------------------------------------------------------
-
-    def _on_frame(self, image):
-        if not self._shown:
-            return
-        pixmap = QPixmap.fromImage(image).scaled(
-            self.video_label.size(),
-            Qt.AspectRatioMode.KeepAspectRatio,
-            Qt.TransformationMode.SmoothTransformation)
-        self.video_label.setPixmap(pixmap)
-
-    def _start_stream(self):
-        url = blueiris_stream_url(self._camera, self.session.key)
-        if not url:
-            self.video_label.setText('blueiris_server is not set in Config.py')
-            return
-        self.stream.start(url, bool(getattr(Config, 'blueiris_ignore_ssl_errors', 0)))
-
-    def _on_failed(self, message):
-        print('ERROR: Blue Iris stream: ' + message)
-        # A session that has expired looks exactly like a refused one, so drop
-        # it and sign in again once before giving up.
-        if (self.session.key and not self._retried and self._shown
-                and self.video_label.pixmap().isNull()):
-            self._retried = True
-            self.session.clear()
-            self.video_label.setText('Signing in to Blue Iris again...')
-            self.session.acquire()
-            return
-        if self._shown and self.video_label.pixmap().isNull():
-            self.video_label.setText('Camera unavailable\n' + message)
 
     # -- presentation ---------------------------------------------------------
 
@@ -2781,7 +2905,7 @@ def blueiris_server_url():
     return server
 
 
-def blueiris_stream_url(camera, session=''):
+def blueiris_stream_url(camera, session='', width=0):
     """MJPEG URL for one camera, scaled down by Blue Iris rather than the Pi.
 
     Which credentials belong on the URL depends on how the Blue Iris web server
@@ -2794,8 +2918,10 @@ def blueiris_stream_url(camera, session=''):
         return None
     # Blue Iris serves motion JPEG at /mjpg/<camera>/video.mjpg (manual p262).
     # Without the trailing video.mjpg it bounces to its login page.
+    # width defaults to the whole-panel size; a tile in a grid asks for less.
     url = '%s/mjpg/%s/video.mjpg?w=%d' % (
-        server, quote(camera), int(getattr(Config, 'blueiris_stream_width', 640)))
+        server, quote(camera),
+        int(width or getattr(Config, 'blueiris_stream_width', 640)))
     if session:
         url += '&session=%s' % quote(session)
         return url
