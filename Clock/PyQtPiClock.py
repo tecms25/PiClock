@@ -1900,10 +1900,23 @@ class _StaticLine(QtWidgets.QLabel):
         super().__init__(parent)
         self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
         self.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._full = ''
 
     def set_text(self, text, stylesheet):
         self.setStyleSheet('background: transparent; ' + stylesheet)
-        self.setText(text)
+        self._full = text
+        self._elide()
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self._elide()
+
+    def _elide(self):
+        """Trim the tail if the line is too long. A centred QLabel that
+        overflows is clipped at both ends, which would eat the start of the
+        line as well; dropping the last item is the smaller loss."""
+        self.setText(self.fontMetrics().elidedText(
+            self._full, Qt.TextElideMode.ElideRight, self.width()))
 
 
 class _EventSink(QtWidgets.QFrame):
@@ -2151,7 +2164,7 @@ class AlertBubble(InfoBubble):
         if total > 1:
             title += '  ({0}/{1})'.format(position, total)
         bits = [b for b in (alert.get('area'), alert.get('headline')) if b]
-        return title, '   •   '.join(bits)
+        return title, '  •  '.join(bits)
 
     def mousePressEvent(self, event):
         if self.items:
@@ -2211,10 +2224,10 @@ class FlightBubble(InfoBubble):
                 bits.append('%.0f %s' % (speed_conv(float(craft['speed_kt'])), speed_unit))
             except (TypeError, ValueError):
                 pass
-        bits.append('%.0f%s up' % (craft['elevation_deg'], chr(176)))
+        bits.append('%.0f%s above horizon' % (craft['elevation_deg'], chr(176)))
         if craft['kind']:
             bits.append(craft['kind'].title())
-        return title, '   •   '.join(bits)
+        return title, '  •  '.join(bits)
 
 
 class AlertDetailPanel(QtWidgets.QFrame):
