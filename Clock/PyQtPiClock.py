@@ -387,11 +387,23 @@ def _hhmm_to_minutes(value):
     return int(hh) * 60 + int(mm)
 
 
+def severe_alert_active():
+    """True while a severe weather alert is up. Read through globals() because
+    the bubble is built long after this module's functions are defined."""
+    bubble = globals().get('alertBubble')
+    return bool(bubble is not None and bubble.items)
+
+
 def get_brightness_percent(now):
     """Target 0-100 display brightness for `now`, per Config.day_start/
     night_start (24-hour HH:MM), with an optional linear fade over
     Config.brightness_transition_minutes at each transition."""
     if not Config.brightness_enabled:
+        return 100
+    # A severe weather warning outranks the schedule. Dimmed to 40% at 3am is
+    # no way to deliver a tornado warning, so the screen goes back to full
+    # until the alert clears and the schedule resumes.
+    if severe_alert_active():
         return 100
 
     day_start = _hhmm_to_minutes(Config.day_start)
@@ -2506,8 +2518,8 @@ class CameraPanel(QtWidgets.QFrame):
         self.setStyleSheet('#cameraScrim { background-color: rgba(0, 0, 0, 165); }')
         self.hide()
 
-        card_w = int(screen_width * 0.88)
-        card_h = int(screen_height * 0.86)
+        card_w = int(screen_width * 0.94)
+        card_h = int(screen_height * 0.93)
         card_x = int((screen_width - card_w) / 2)
         card_y = int((screen_height - card_h) / 2)
         pad = int(card_w * 0.018)
@@ -2570,6 +2582,10 @@ class CameraPanel(QtWidgets.QFrame):
 
         self.dismiss_timer.start(int(max(1, seconds) * 1000))
         self._pause_slideshow()
+        # Raising above every sibling puts this over brightness_overlay too, so
+        # the camera shows in true colour however far the night dimming has the
+        # rest of the screen turned down. Keep this after anything that raises
+        # the overlay, or the picture goes dim with everything else.
         self.raise_()
         if not self._shown:
             self._shown = True
