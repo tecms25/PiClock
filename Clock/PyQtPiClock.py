@@ -643,6 +643,14 @@ def inhg2mbar(f):
     return f * 33.864  # pressure inHg to millibars
 
 
+def nm2miles(f):
+    return f * 1.15078  # distance nautical miles to statute miles
+
+
+def nm2km(f):
+    return f * 1.852  # distance nautical miles to kilometers
+
+
 def inches2mm(f):
     return f * 25.4  # height inches to millimeters
 
@@ -1278,6 +1286,30 @@ def record_pressure_sample(value_inhg):
     pressure_history[:] = [(t, v) for (t, v) in pressure_history if t >= cutoff]
 
 
+def show_pressure():
+    """Draw the pressure reading, with the trend arrow in its own label beside
+    it.
+
+    The arrow is deliberately not part of the pressure label. Inline, a larger
+    glyph grows the line box, which pushes the reading down (the label is top
+    aligned) and sideways (it is centre aligned). A separate label leaves the
+    reading exactly where it was.
+    """
+    press.setText(pressure_label_text)
+    if not pressure_trend_arrow:
+        pressarrow.hide()
+        return
+    metrics = press.fontMetrics()
+    text_w = metrics.horizontalAdvance(pressure_label_text)
+    line_h = metrics.height()
+    box_h = int(line_h * PRESSURE_ARROW_SCALE * 1.4)
+    left = press.x() + press.width() // 2 + text_w // 2 + int(5 * xscale)
+    pressarrow.setText(pressure_trend_arrow)
+    pressarrow.setGeometry(left, press.y() + line_h // 2 - box_h // 2,
+                           int(46 * xscale), box_h)
+    pressarrow.show()
+
+
 def set_pressure_label(pressure_str, value_inhg):
     """Record a new pressure sample (if any) and (re)render the pressure label
     using the current, possibly stale, trend arrow. The arrow itself is only
@@ -1286,7 +1318,7 @@ def set_pressure_label(pressure_str, value_inhg):
     pressure_label_text = pressure_str
     if value_inhg is not None:
         record_pressure_sample(value_inhg)
-    press.setText(pressure_label_text + pressure_trend_arrow)
+    show_pressure()
 
 
 def update_pressure_trend():
@@ -1300,11 +1332,11 @@ def update_pressure_trend():
         # to decide which way pressure has been tracking.
         delta = window[-1][1] - window[0][1]
         if delta >= PRESSURE_TREND_DEADBAND_INHG:
-            pressure_trend_arrow = u' ↑'
+            pressure_trend_arrow = u'↑'
         elif delta <= -PRESSURE_TREND_DEADBAND_INHG:
-            pressure_trend_arrow = u' ↓'
+            pressure_trend_arrow = u'↓'
         # else: within the deadband, keep the previous arrow to avoid flicker
-    press.setText(pressure_label_text + pressure_trend_arrow)
+    show_pressure()
 
 
 def getallwx():
@@ -1469,11 +1501,147 @@ def noaa_alerts_finished():
     if alerts:
         print(f'INFO: {len(alerts)} active NOAA alert(s): ' + ', '.join(a['event'] for a in alerts))
     alertBubble.set_alerts(alerts)
+    update_bubble_priority()
+
+
+# --- Aircraft overhead (airplanes.live) --------------------------------------
+# A community ADS-B feed, no API key needed. Only aircraft high enough in the
+# sky to actually be worth looking up at are shown - see flight_elevation().
+FLIGHT_API = 'https://api.airplanes.live/v2/point/%s/%s/%d'
+FEET_PER_NM = 6076.12
+
+# Callsign prefixes are ICAO airline codes. The feed's ownOp field is the
+# registered owner, which is often a leasing trust rather than the airline
+# flying it, so the callsign is the reliable signal. Unlisted codes just show
+# the raw callsign.
+ICAO_AIRLINES = {
+    # North America
+    'AAL': 'American', 'AAY': 'Allegiant', 'ACA': 'Air Canada', 'ASA': 'Alaska',
+    'ASH': 'Mesa', 'AWI': 'Air Wisconsin', 'DAL': 'Delta', 'EDV': 'Endeavor',
+    'ENY': 'Envoy', 'FFT': 'Frontier', 'GJS': 'GoJet', 'HAL': 'Hawaiian',
+    'JBU': 'JetBlue', 'JIA': 'PSA', 'JZA': 'Jazz', 'KAP': 'Cape Air',
+    'MXY': 'Breeze', 'NKS': 'Spirit', 'PDT': 'Piedmont', 'POE': 'Porter',
+    'QXE': 'Horizon', 'ROU': 'Air Canada Rouge', 'RPA': 'Republic',
+    'SCX': 'Sun Country', 'SKW': 'SkyWest', 'SWA': 'Southwest',
+    'TSC': 'Air Transat', 'UAL': 'United', 'VOI': 'Volaris', 'WJA': 'WestJet',
+    # Cargo
+    'ABX': 'ABX Air', 'CKS': 'Kalitta', 'CLX': 'Cargolux', 'FDX': 'FedEx',
+    'GEC': 'Lufthansa Cargo', 'GTI': 'Atlas Air', 'PAC': 'Polar Air',
+    'UPS': 'UPS',
+    # Business / fractional
+    'EJA': 'NetJets', 'LXJ': 'Flexjet',
+    # Europe
+    'AUA': 'Austrian', 'AFR': 'Air France', 'BAW': 'British Airways',
+    'BEL': 'Brussels', 'CFG': 'Condor', 'DLH': 'Lufthansa', 'EIN': 'Aer Lingus',
+    'EZY': 'easyJet', 'FIN': 'Finnair', 'IBE': 'Iberia', 'ICE': 'Icelandair',
+    'KLM': 'KLM', 'LOT': 'LOT', 'NAX': 'Norwegian', 'RYR': 'Ryanair',
+    'SAS': 'SAS', 'SWR': 'Swiss', 'TAP': 'TAP', 'THY': 'Turkish',
+    'VIR': 'Virgin Atlantic', 'VLG': 'Vueling', 'WZZ': 'Wizz Air',
+    # Rest of world
+    'AMX': 'Aeromexico', 'ANA': 'All Nippon', 'ANZ': 'Air New Zealand',
+    'AVA': 'Avianca', 'CPA': 'Cathay Pacific', 'CMP': 'Copa', 'ETD': 'Etihad',
+    'ETH': 'Ethiopian', 'JAL': 'Japan Airlines', 'KAL': 'Korean Air',
+    'LAN': 'LATAM', 'QFA': 'Qantas', 'QTR': 'Qatar', 'SIA': 'Singapore',
+    'UAE': 'Emirates', 'VOZ': 'Virgin Australia',
+    # Other
+    'CAP': 'Civil Air Patrol',
+}
+
+
+# Which way to look, drawn as an arrow. North is up, matching how you would
+# hold a map. Keys are exactly what bearing() returns, so the arrow and the
+# written compass point can never disagree.
+COMPASS_ARROWS = {
+    'N': '\u2191', 'NE': '\u2197', 'E': '\u2192', 'SE': '\u2198',
+    'S': '\u2193', 'SW': '\u2199', 'W': '\u2190', 'NW': '\u2196',
+}
+
+
+def flight_elevation(alt_ft, dist_nm):
+    """Degrees above the horizon an aircraft appears at.
+
+    Distance alone is the wrong test: a jet at 35,000ft is genuinely overhead
+    at 10nm but a speck at 30nm. The angle folds altitude and distance into
+    the one number that matches what you would actually see.
+    """
+    ground_ft = dist_nm * FEET_PER_NM
+    if ground_ft <= 0:
+        return 90.0
+    return math.degrees(math.atan2(alt_ft, ground_ft))
+
+
+def get_flights():
+    """Ask for aircraft near Config.location, if the feature is switched on."""
+    global manager, flightReply
+    if not Config.flights_enabled:
+        return
+    url = FLIGHT_API % (Config.location.lat, Config.location.lng,
+                        Config.flight_search_radius_nm)
+    req = QNetworkRequest(QUrl(url))
+    req.setRawHeader(b'User-Agent', b'PiClock/1.0 (https://github.com/tecms25/PiClock)')
+    flightReply = manager.get(req)
+    flightReply.finished.connect(flights_finished)
+
+
+def flights_finished():
+    global flightReply
+
+    flightReply.deleteLater()
+    if flightReply.error() != QNetworkReply.NetworkError.NoError:
+        print('ERROR: Response from airplanes.live: ' + flightReply.errorString())
+        return
+    try:
+        data = json.loads(str(bytes(flightReply.readAll()), 'utf-8'))
+    except ValueError:
+        print('WARNING:', traceback.format_exc())
+        print('WARNING: could not parse the airplanes.live response')
+        return
+
+    overhead = []
+    for craft in data.get('ac') or []:
+        alt = craft.get('alt_baro')
+        dist = craft.get('dst')
+        if alt is None or dist is None or alt == 'ground':
+            continue  # on the ground, or not reporting altitude
+        try:
+            alt = float(alt)
+            dist = float(dist)
+        except (TypeError, ValueError):
+            continue
+        elevation = flight_elevation(alt, dist)
+        if elevation < Config.flight_min_elevation:
+            continue
+        overhead.append({
+            'icao': (craft.get('hex') or '').strip(),
+            'callsign': (craft.get('flight') or '').strip(),
+            'registration': (craft.get('r') or '').strip(),
+            'kind': (craft.get('desc') or craft.get('t') or '').strip(),
+            'altitude_ft': alt,
+            'distance_nm': dist,
+            'bearing_deg': craft.get('dir'),
+            'speed_kt': craft.get('gs'),
+            'elevation_deg': elevation,
+        })
+
+    # Highest in the sky first: that is the one most worth looking up at.
+    overhead.sort(key=lambda c: c['elevation_deg'], reverse=True)
+    if overhead:
+        print('INFO: %d aircraft overhead: ' % len(overhead) +
+              ', '.join((c['callsign'] or c['registration'] or '?') for c in overhead))
+    flightBubble.set_items(overhead)
+    update_bubble_priority()
+
+
+def update_bubble_priority():
+    """The alert bar owns that slot on the screen. Aircraft step aside until
+    the severe weather alert has cleared."""
+    if hasattr(Config, 'flights_enabled') and Config.flights_enabled:
+        flightBubble.set_suppressed(bool(alertBubble.items))
 
 
 def qtstart():
     global ctimer, wxtimer, temptimer, metadatatimer, cursortimer, alerttimer
-    global apicachecleanuptimer
+    global apicachecleanuptimer, flighttimer
     global pressuretrendtimer
     global objradar1
     global objradar2
@@ -1567,6 +1735,14 @@ def qtstart():
     alerttimer.start(int(1000 * 60 * Config.alert_refresh + random.uniform(1000, 5000)))
     get_noaa_alerts()
 
+    # Aircraft passing overhead, if switched on
+    if Config.flights_enabled:
+        global flighttimer
+        flighttimer = QtCore.QTimer()
+        flighttimer.timeout.connect(get_flights)
+        flighttimer.start(int(1000 * Config.flight_poll_seconds + random.uniform(200, 2000)))
+        get_flights()
+
     if Config.useslideshow:
         objimage1.start(Config.slide_time)
 
@@ -1652,6 +1828,7 @@ def icloud_photo_entries(webstream_data):
 # keeps the swap in step with what is actually on screen.
 ALERT_CYCLE_PAD_MS = 600  # beat between the text clearing and the next alert
 ALERT_CYCLE_MAX_MS = 40000  # safety cap, so one huge headline can't stall the rest
+FLIGHT_DWELL_MS = 6000  # how long each aircraft stays up when several are overhead
 TICKER_PX_PER_TICK = 2  # ticker scroll speed
 TICKER_TICK_MS = 30
 TICKER_GAP_PX = 80  # blank gap after the text leaves before it re-enters
@@ -1713,6 +1890,20 @@ class _Ticker(QtWidgets.QWidget):
             self.finished.emit()
 
 
+class _StaticLine(QtWidgets.QLabel):
+    """Sub-line that simply sits there. Same set_text() interface as _Ticker,
+    for bubbles whose text is short enough to read at a glance."""
+
+    def __init__(self, parent):
+        super().__init__(parent)
+        self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+        self.setAlignment(Qt.AlignmentFlag.AlignCenter)
+
+    def set_text(self, text, stylesheet):
+        self.setStyleSheet('background: transparent; ' + stylesheet)
+        self.setText(text)
+
+
 class _EventSink(QtWidgets.QFrame):
     """A plain QFrame that swallows mouse presses so taps inside it don't
     propagate up to (and dismiss) an ancestor overlay."""
@@ -1721,28 +1912,33 @@ class _EventSink(QtWidgets.QFrame):
         pass
 
 
-class AlertBubble(QtWidgets.QFrame):
-    """Red, semi-transparent warning bar for active NOAA/NWS severe weather
-    alerts (see get_noaa_alerts()). Hidden when there are none; fades in/out
-    as alerts appear or clear, cycles through multiple active alerts, and
-    runs the area/headline past as a ticker. Tap it for full details."""
+class InfoBubble(QtWidgets.QFrame):
+    """Rounded translucent bar with a bold title line and a scrolling sub-line.
 
-    def __init__(self, parent, rect, detail_panel):
+    Fades in when it has something to say and out when it does not, and rotates
+    through its items one at a time, each staying up until its ticker has run
+    once. Subclasses supply the colours and fill in format_item().
+    """
+
+    # Subclasses may make the sub-line static and set a fixed dwell instead of
+    # letting the ticker's own run decide when to move on.
+    SCROLL_SUBLINE = True
+    DWELL_MS = None
+
+    def __init__(self, parent, rect, name, background, ticker_color):
         QtWidgets.QFrame.__init__(self, parent)
-        self.detail_panel = detail_panel
-        self.setObjectName('alertBubble')
+        self.setObjectName(name)
         self.setGeometry(rect)
-        self.setCursor(Qt.CursorShape.PointingHandCursor)
         self.setStyleSheet(
-            '#alertBubble { background-color: rgba(190, 20, 20, 195); '
-            'border-radius: ' + str(int(rect.height() / 3.2)) + 'px; }')
+            '#%s { background-color: %s; border-radius: %dpx; }'
+            % (name, background, int(rect.height() / 3.2)))
 
         pad_x = int(rect.width() * 0.05)
         title_style = (
             'color: #FFFFFF; font-family:"Open Sans"; font-weight: bold; '
             'font-size: ' + str(int(21 * xscale * Config.fontmult)) + 'px; ' + Config.fontattr)
         self._ticker_style = (
-            'color: #FFE2E2; font-family:"Open Sans"; '
+            'color: %s; font-family:"Open Sans"; ' % ticker_color +
             'font-size: ' + str(int(15 * xscale * Config.fontmult)) + 'px; ' + Config.fontattr)
 
         self.title_label = QtWidgets.QLabel(self)
@@ -1753,7 +1949,7 @@ class AlertBubble(QtWidgets.QFrame):
         self.title_label.setStyleSheet('background: transparent; ' + title_style)
         self.title_label.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
 
-        self.ticker = _Ticker(self)
+        self.ticker = _Ticker(self) if self.SCROLL_SUBLINE else _StaticLine(self)
         self.ticker.setGeometry(pad_x, int(rect.height() * 0.62),
                                  rect.width() - pad_x * 2, int(rect.height() * 0.32))
 
@@ -1762,64 +1958,89 @@ class AlertBubble(QtWidgets.QFrame):
         self.setGraphicsEffect(self._opacity_effect)
         self.hide()
 
-        self.alerts = []
+        self.items = []
         self.index = 0
         self._anim = None
         self._shown = False
+        self._suppressed = False
 
         # Driven by the ticker finishing rather than a fixed interval, so an
-        # alert is never swapped out mid-sentence or left replaying.
+        # item is never swapped out mid-sentence or left replaying.
         self.cycle_timer = QtCore.QTimer()
         self.cycle_timer.setSingleShot(True)
         self.cycle_timer.timeout.connect(self._cycle)
-        self.ticker.finished.connect(self._ticker_finished)
+        if self.SCROLL_SUBLINE:
+            self.ticker.finished.connect(self._ticker_finished)
 
-    def set_alerts(self, alerts):
-        self.alerts = alerts
+    # -- content -------------------------------------------------------------
+
+    def format_item(self, item, position, total):
+        """Return (title, ticker_text) for one item. Implemented per subclass."""
+        raise NotImplementedError
+
+    def item_key(self, item):
+        """Stable identity for an item, so a refresh can carry on from where it
+        was rather than jumping back to the start. None restarts the rotation."""
+        return None
+
+    def set_items(self, items):
+        # Remember what is on screen so a refresh can stay on it.
+        showing = None
+        if self.items and self.index < len(self.items):
+            showing = self.item_key(self.items[self.index])
+
+        self.items = items
         self.index = 0
+        if showing is not None:
+            for i, item in enumerate(items):
+                if self.item_key(item) == showing:
+                    self.index = i
+                    break
         # Drop any pending cycle from the previous set; _show_current() re-arms
-        # it when there is still more than one alert to rotate through.
+        # it when there is still more than one item to rotate through.
         self.cycle_timer.stop()
-        if alerts:
+        if items:
             self._show_current()
-            if not self._shown:
-                self._shown = True
-                self._fade(1.0)
-        else:
-            if self._shown:
-                self._shown = False
-                self._fade(0.0)
+        self._update_visibility()
+
+    def set_suppressed(self, suppressed):
+        """Hide despite having items, so a more important bubble can use the
+        same spot."""
+        suppressed = bool(suppressed)
+        if suppressed != self._suppressed:
+            self._suppressed = suppressed
+            self._update_visibility()
+
+    def _update_visibility(self):
+        want = bool(self.items) and not self._suppressed
+        if want != self._shown:
+            self._shown = want
+            self._fade(1.0 if want else 0.0)
 
     def _cycle(self):
-        if len(self.alerts) > 1:
-            self.index = (self.index + 1) % len(self.alerts)
+        if len(self.items) > 1:
+            self.index = (self.index + 1) % len(self.items)
             self._show_current()
 
     def _show_current(self):
-        alert = self.alerts[self.index]
-        title = alert['event'].upper()
-        if alert.get('expires'):
-            title += '  ·  until {0:%-I:%M %p}'.format(alert['expires'])
-        if len(self.alerts) > 1:
-            title += '  ({0}/{1})'.format(self.index + 1, len(self.alerts))
+        title, ticker_text = self.format_item(
+            self.items[self.index], self.index + 1, len(self.items))
         self.title_label.setText(title)
-
-        ticker_bits = [b for b in (alert.get('area'), alert.get('headline')) if b]
-        self.ticker.set_text('   •   '.join(ticker_bits), self._ticker_style)
-
-        if len(self.alerts) > 1:
-            # Backstop only: normally _ticker_finished() gets there first.
-            self.cycle_timer.start(ALERT_CYCLE_MAX_MS)
+        self.ticker.set_text(ticker_text, self._ticker_style)
+        if len(self.items) > 1:
+            if self.DWELL_MS:
+                self.cycle_timer.start(self.DWELL_MS)
+            else:
+                # Backstop only: normally _ticker_finished() gets there first.
+                self.cycle_timer.start(ALERT_CYCLE_MAX_MS)
 
     def _ticker_finished(self):
         """The line has run in full, so move on after a short beat. Restarting
         the timer here pre-empts the backstop armed in _show_current()."""
-        if len(self.alerts) > 1:
+        if len(self.items) > 1:
             self.cycle_timer.start(ALERT_CYCLE_PAD_MS)
 
-    def mousePressEvent(self, event):
-        if self.alerts:
-            self.detail_panel.show_alert(self.alerts, self.index)
+    # -- presentation --------------------------------------------------------
 
     def _fade(self, target):
         if self._anim is not None:
@@ -1835,6 +2056,96 @@ class AlertBubble(QtWidgets.QFrame):
             anim.finished.connect(self.hide)
         self._anim = anim
         anim.start()
+
+
+class AlertBubble(InfoBubble):
+    """Red warning bar for active NOAA/NWS severe weather alerts (see
+    get_noaa_alerts()). Tap it for the full alert text."""
+
+    def __init__(self, parent, rect, detail_panel):
+        InfoBubble.__init__(self, parent, rect, 'alertBubble',
+                            'rgba(190, 20, 20, 195)', '#FFE2E2')
+        self.detail_panel = detail_panel
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+
+    @property
+    def alerts(self):
+        return self.items
+
+    def set_alerts(self, alerts):
+        self.set_items(alerts)
+
+    def format_item(self, alert, position, total):
+        title = alert['event'].upper()
+        if alert.get('expires'):
+            title += '  ·  until {0:%-I:%M %p}'.format(alert['expires'])
+        if total > 1:
+            title += '  ({0}/{1})'.format(position, total)
+        bits = [b for b in (alert.get('area'), alert.get('headline')) if b]
+        return title, '   •   '.join(bits)
+
+    def mousePressEvent(self, event):
+        if self.items:
+            self.detail_panel.show_alert(self.items, self.index)
+
+
+class FlightBubble(InfoBubble):
+    """Bar naming an aircraft passing overhead, with how far away, which way to
+    look, how high and how fast. Shares the alert bar's spot and gives way to
+    it (see update_bubble_priority()).
+
+    Deliberately quieter than the alert bar: the line is short enough to read
+    at a glance so it does not scroll, and the background is lighter, since
+    this is a curiosity rather than something demanding attention.
+    """
+
+    SCROLL_SUBLINE = False
+    DWELL_MS = FLIGHT_DWELL_MS
+
+    def __init__(self, parent, rect):
+        InfoBubble.__init__(self, parent, rect, 'flightBubble',
+                            'rgba(18, 46, 92, 120)', '#D8E6FF')
+
+    def item_key(self, craft):
+        """The ICAO24 address is the aircraft's permanent id, so the bubble can
+        stay with the same plane as it moves between refreshes."""
+        return craft.get('icao') or craft.get('callsign')
+
+    def format_item(self, craft, position, total):
+        callsign = craft['callsign'] or craft['registration'] or 'Aircraft'
+        airline = ICAO_AIRLINES.get(callsign[:3].upper())
+        title = '%s %s' % (airline, callsign[3:].strip()) if airline else callsign
+        if total > 1:
+            title += '  ({0}/{1})'.format(position, total)
+
+        # Distance, altitude and speed follow Config.metric like the rest of
+        # the clock; the feed itself reports nautical miles, feet and knots.
+        if Config.metric:
+            dist = '%.0f km' % nm2km(craft['distance_nm'])
+            alt = '{:,.0f} m'.format(craft['altitude_ft'] * 0.3048)
+            speed_unit, speed_conv = 'km/h', nm2km
+        else:
+            dist = '%.0f mi' % nm2miles(craft['distance_nm'])
+            alt = '{:,.0f} ft'.format(craft['altitude_ft'])
+            speed_unit, speed_conv = 'mph', nm2miles
+
+        bits = []
+        if craft['bearing_deg'] is not None:
+            compass = bearing(float(craft['bearing_deg']))
+            bits.append('%s to the %s %s'
+                        % (dist, compass, COMPASS_ARROWS.get(compass, '')))
+        else:
+            bits.append('%s away' % dist)
+        bits.append(alt)
+        if craft['speed_kt'] is not None:
+            try:
+                bits.append('%.0f %s' % (speed_conv(float(craft['speed_kt'])), speed_unit))
+            except (TypeError, ValueError):
+                pass
+        bits.append('%.0f%s up' % (craft['elevation_deg'], chr(176)))
+        if craft['kind']:
+            bits.append(craft['kind'].title())
+        return title, '   •   '.join(bits)
 
 
 class AlertDetailPanel(QtWidgets.QFrame):
@@ -3005,7 +3316,7 @@ def realquit():
 
 def myquit(signum, frame):
     global objradar1, objradar2, objradar3, objradar4
-    global ctimer, wxtimer, temptimer, cursortimer, alerttimer
+    global ctimer, wxtimer, temptimer, cursortimer, alerttimer, flighttimer
 
     objradar1.stop()
     objradar2.stop()
@@ -3016,6 +3327,8 @@ def myquit(signum, frame):
     temptimer.stop()
     cursortimer.stop()
     alerttimer.stop()
+    if Config.flights_enabled and flighttimer is not None:
+        flighttimer.stop()
     if Config.useslideshow:
         objimage1.stop()
     release_display_sleep()
@@ -3167,6 +3480,28 @@ try:
 except AttributeError:
     Config.prevent_screen_sleep = 1
 
+# Off unless a config asks for it, so existing installs are unchanged and
+# nobody starts polling a third-party feed without opting in.
+try:
+    Config.flights_enabled
+except AttributeError:
+    Config.flights_enabled = 0
+
+try:
+    Config.flight_poll_seconds
+except AttributeError:
+    Config.flight_poll_seconds = 30
+
+try:
+    Config.flight_min_elevation
+except AttributeError:
+    Config.flight_min_elevation = 30  # degrees above the horizon
+
+try:
+    Config.flight_search_radius_nm
+except AttributeError:
+    Config.flight_search_radius_nm = 50
+
 try:
     Config.web_slideshow_playlist
 except AttributeError:
@@ -3292,6 +3627,7 @@ lasttimestr = ''
 weatherplayer = None
 lastkeytime = 0
 last_brightness_percent = -1
+flighttimer = None
 sleep_inhibit_process = None
 keepalive_timer = None
 
@@ -3300,6 +3636,9 @@ keepalive_timer = None
 # pressuretrendtimer in qtstart()), based on the change over the last 2 hours.
 PRESSURE_TREND_WINDOW_SEC = 2 * 60 * 60
 PRESSURE_TREND_DEADBAND_INHG = 0.02  # ~0.68 hPa; ignore noise below this over the window
+# The arrow is drawn larger than the pressure text next to it, so which way
+# the pressure is going reads at a glance from across the room.
+PRESSURE_ARROW_SCALE = 1.7
 pressure_history = []  # list of (unix_timestamp, pressure_inHg)
 pressure_trend_arrow = ''
 pressure_label_text = ''
@@ -3606,6 +3945,22 @@ press.setGeometry(int(3 * xscale), int(ypos * yscale), int(300 * xscale), 100)
 
 add_text_shadow(press)
 
+# The trend arrow lives in its own label so its larger glyph cannot disturb the
+# pressure reading's position. show_pressure() places it on each update.
+pressarrow = QtWidgets.QLabel(foreGround)
+pressarrow.setObjectName('pressarrow')
+pressarrow.setStyleSheet('#pressarrow { background-color: transparent; color: ' +
+                         Config.textcolor +
+                         '; font-size: ' +
+                         str(int(17 * xscale * Config.fontmult * PRESSURE_ARROW_SCALE)) +
+                         'px; ' +
+                         Config.fontattr +
+                         '}')
+pressarrow.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+pressarrow.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+pressarrow.hide()
+add_text_shadow(pressarrow)
+
 
 ypos += 22
 wind = QtWidgets.QLabel(foreGround)
@@ -3670,6 +4025,8 @@ alertrect = QtCore.QRect(
     int(width * ALERT_W),
     int(height * 0.075))
 alertBubble = AlertBubble(foreGround, alertrect, alertDetailPanel)
+# Same slot as the alert bar; update_bubble_priority() keeps them from clashing.
+flightBubble = FlightBubble(foreGround, alertrect)
 
 
 temp = QtWidgets.QLabel(foreGround)
@@ -3738,6 +4095,7 @@ for i in range(0, 9):
 # above the display-only labels created after it - otherwise they win
 # hit-testing and only the part of the bar they don't cover responds to taps.
 alertBubble.raise_()
+flightBubble.raise_()
 
 
 def add_scrim(x, y, w_, h_, gradient):
@@ -3826,8 +4184,9 @@ def apply_photo_layout():
     bottom.setGeometry(0, int(footer_top * yscale), width, int(PHOTO_FOOTER_H * yscale))
     bottom.setAlignment(Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignVCenter)
 
-    alertBubble.setGeometry(int(width * ALERT_X), int(height * PHOTO_ALERT_TOP),
-                            int(width * ALERT_W), int(height * PHOTO_ALERT_H))
+    for bubble in (alertBubble, flightBubble):
+        bubble.setGeometry(int(width * ALERT_X), int(height * PHOTO_ALERT_TOP),
+                           int(width * ALERT_W), int(height * PHOTO_ALERT_H))
 
 
 add_scrims()

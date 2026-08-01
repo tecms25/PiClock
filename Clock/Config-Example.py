@@ -36,6 +36,21 @@ brightness_transition_minutes = 30  # minutes to gradually fade between day/nigh
 # and Linux (X11 and most Wayland desktop environments).
 prevent_screen_sleep = 1  # 1 to enable, 0 to disable
 
+# Aircraft overhead
+# Shows a bubble naming a plane passing overhead, in the same spot as the
+# severe weather alert. If an alert is active the aircraft bubble stays out of
+# the way until the alert has cleared.
+# Data comes from airplanes.live, a volunteer-run ADS-B feed. No key needed,
+# but it is someone else's bandwidth, so leave this off unless you want it.
+flights_enabled = 0  # 1 to enable, 0 to disable
+flight_poll_seconds = 30  # how often to look for aircraft
+# How high in the sky a plane must be to count, in degrees above the horizon.
+# This beats a plain distance: a jet at 35,000ft is genuinely overhead at 10nm
+# but an invisible speck at 30nm. Lower this to catch more, raise it for only
+# the ones nearly straight up. 30 is a handful at a time.
+flight_min_elevation = 30
+flight_search_radius_nm = 50  # how far out to ask for aircraft (max 250)
+
 # Severe weather warning bubble, from api.weather.gov
 noaa_alerts_enabled = 1  # 1 to show a warning bubble for active NOAA/NWS alerts, 0 to disable
 alert_refresh = 10  # minutes between severe weather alert checks

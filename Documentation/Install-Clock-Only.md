@@ -241,6 +241,31 @@ Unlike the weather/radar API calls, alert checks are never served from
 `Clock/api_cache` - they always hit the live API, since a stale cached "no
 alerts" response could mask a genuinely new one.
 
+#### Aircraft overhead
+PiClock can show a bubble naming an aircraft passing overhead - callsign and
+airline, how far away it is and which way to look, its altitude, speed and
+type. It uses the same spot on screen as the severe weather alert, and gives
+way to it: while any alert is active the aircraft bubble stays hidden, and it
+comes back once the alert clears. Settings:
+
+  * `flights_enabled` - 1 to enable, 0 to disable (off by default)
+  * `flight_poll_seconds` - how often to look for aircraft
+  * `flight_min_elevation` - how high in the sky a plane must be to count,
+    in degrees above the horizon
+  * `flight_search_radius_nm` - how far out to ask for aircraft (max 250)
+
+`flight_min_elevation` is the setting that decides what you actually see, and
+it is deliberately an angle rather than a distance. A jet at 35,000ft is
+genuinely overhead at 10nm but an invisible speck at 30nm, so a plain radius
+would either miss the good ones or bury you in ones you cannot see. At the
+default of 30 degrees you get a handful at a time, all high in the sky. Lower
+it to catch more, raise it for only the ones nearly straight up.
+
+Data comes from [airplanes.live](https://airplanes.live/), a volunteer-run
+ADS-B feed. No account or API key is needed, but it is someone else's
+bandwidth being spent, which is why this is off unless you turn it on. If you
+enable it, keep `flight_poll_seconds` reasonable.
+
 #### Screen brightness and always-on display
 PiClock can automatically dim the whole display at night and brighten it back
 up during the day, on a schedule you set using a 24-hour clock. This is a

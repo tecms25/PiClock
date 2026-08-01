@@ -161,6 +161,17 @@ configure_piclock() {
   fi
 
   echo ""
+  echo "--- Aircraft overhead ---"
+  echo "Shows a bubble when a plane passes overhead. Uses airplanes.live, a"
+  echo "volunteer-run ADS-B feed - no account needed, but it is their bandwidth."
+  read -r -p "Enable the aircraft overhead bubble? [y/N] " REPLY
+  if [ "$REPLY" = "y" ] || [ "$REPLY" = "Y" ]; then
+    set_py_line "$CFG" '^flights_enabled *=' "flights_enabled = 1  # 1 to enable, 0 to disable"
+  else
+    set_py_line "$CFG" '^flights_enabled *=' "flights_enabled = 0  # 1 to enable, 0 to disable"
+  fi
+
+  echo ""
   echo "--- Screen Brightness ---"
   read -r -p "Automatically dim the display at night? [Y/n] " DIM_ENABLE
   if [ "$DIM_ENABLE" = "n" ] || [ "$DIM_ENABLE" = "N" ]; then

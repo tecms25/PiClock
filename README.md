@@ -26,6 +26,9 @@ The digital display looks much sleaker and I didn't intend to support it for my 
     (Windows) set up the virtualenv, packages, fonts, and config interactively.
     `update.sh` then offers to add any newly released settings to an existing
     install without disturbing the values you have already set.
+  * **Aircraft overhead** - an optional bubble naming a plane passing above you,
+    with distance, bearing, altitude and speed. Shares the alert bar's slot and
+    steps aside whenever there is a severe weather alert.
   * **Photo-friendly layout** - an optional arrangement that stacks the time,
     date and sun/moon compactly along the bottom and moves the severe weather
     alert up top, with soft gradient panels behind the text so it stays
