@@ -51,6 +51,34 @@ flight_poll_seconds = 30  # how often to look for aircraft
 flight_min_elevation = 30
 flight_search_radius_nm = 150  # how far out to ask for aircraft (max 250)
 
+# Blue Iris camera alerts
+# When Blue Iris trips an alert it calls PiClock over the LAN and the camera
+# goes up on screen for a few seconds, then the clock comes back. Set this up
+# in Blue Iris under Camera settings > Alerts > On alert > Web request, using:
+#   http://<pi-address>:8127/alert?token=<blueiris_token>&cam=&CAM&memo=&MEMO
+# Nothing is polled, so the popup is as quick as Blue Iris' own alert.
+blueiris_enabled = 0  # 1 to enable, 0 to disable
+blueiris_listen_port = 8127  # port PiClock listens on for Blue Iris
+# Shared secret; must match the token= in the web request above. Leave blank to
+# accept any request, which is only sensible on a trusted network.
+blueiris_token = ''
+blueiris_server = ''  # Blue Iris web server, e.g. 'http://192.168.1.10:81'
+blueiris_user = ''  # a Blue Iris user allowed to view the cameras
+blueiris_password = ''
+# Only these cameras pop up, by Blue Iris short name. Empty list means any.
+blueiris_cameras = []
+# Only pop up when the alert memo mentions one of these. The ONVIF rules on
+# Tapo cameras send text like 'People' or 'IsPet', so ['People'] shows a person
+# at the door and ignores the cat. Empty list means any alert.
+blueiris_triggers = []
+blueiris_show_seconds = 20  # how long the camera stays on screen
+# Width Blue Iris scales the stream to before sending it. Lower this if the
+# clock stutters while a camera is up; the Pi decodes every frame.
+blueiris_stream_width = 640
+# Optional source address allow-list, e.g. ['192.168.1.10'] for the Blue Iris
+# machine. Empty list accepts an alert from anywhere on the network.
+blueiris_allow_from = []
+
 # Severe weather warning bubble, from api.weather.gov
 noaa_alerts_enabled = 1  # 1 to show a warning bubble for active NOAA/NWS alerts, 0 to disable
 alert_refresh = 10  # minutes between severe weather alert checks

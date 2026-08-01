@@ -18,7 +18,7 @@ import dateutil.parser
 import pytz
 import tzlocal
 from subprocess import Popen
-from urllib.parse import urlparse
+from urllib.parse import urlparse, parse_qsl, quote
 from PyQt6 import QtGui, QtCore, QtNetwork, QtWidgets
 from PyQt6.QtCore import QUrl
 from PyQt6.QtCore import Qt
@@ -1643,7 +1643,7 @@ def update_bubble_priority():
 
 def qtstart():
     global ctimer, wxtimer, temptimer, metadatatimer, cursortimer, alerttimer
-    global apicachecleanuptimer, flighttimer
+    global apicachecleanuptimer, flighttimer, blueirisListener
     global pressuretrendtimer
     global objradar1
     global objradar2
@@ -1744,6 +1744,12 @@ def qtstart():
         flighttimer.timeout.connect(get_flights)
         flighttimer.start(int(1000 * Config.flight_poll_seconds + random.uniform(200, 2000)))
         get_flights()
+
+    # Blue Iris camera alerts, if switched on
+    if getattr(Config, 'blueiris_enabled', 0):
+        blueirisListener = BlueIrisListener()
+        blueirisListener.triggered.connect(blueiris_alert)
+        blueirisListener.listen(getattr(Config, 'blueiris_listen_port', 8127))
 
     if Config.useslideshow:
         objimage1.start(Config.slide_time)
@@ -2368,6 +2374,374 @@ class AlertDetailPanel(QtWidgets.QFrame):
         # A tap that reaches here landed on the scrim itself, not the card
         # (whose own _EventSink swallows clicks) - dismiss.
         self.hide()
+
+
+# --- Blue Iris camera alerts -------------------------------------------------
+# Blue Iris calls PiClock the moment one of its cameras trips an alert, and the
+# camera goes up on screen for a few seconds. Nothing is polled: the "Web
+# request" alert action in Blue Iris does the telling.
+
+class MjpegStream(QtCore.QObject):
+    """Pulls an MJPEG stream and hands out whole frames as they arrive.
+
+    Blue Iris serves motion JPEG at /mjpg/<camera>, which is JPEGs back to back
+    with a boundary line between them. Scanning for the start and end markers
+    is more forgiving than trusting the boundary text, which differs between
+    Blue Iris versions.
+    """
+
+    frame = QtCore.pyqtSignal(QtGui.QImage)
+    failed = QtCore.pyqtSignal(str)
+
+    SOI = b'\xff\xd8'  # JPEG start of image
+    EOI = b'\xff\xd9'  # JPEG end of image
+    MAX_BUFFER = 8 * 1024 * 1024  # more than this buffered means sync is lost
+
+    def __init__(self, parent=None):
+        QtCore.QObject.__init__(self, parent)
+        self._reply = None
+        self._buffer = b''
+
+    def start(self, url):
+        self.stop()
+        request = QNetworkRequest(QUrl(url))
+        request.setRawHeader(b'User-Agent', b'PiClock/1.0')
+        self._reply = manager.get(request)
+        self._reply.readyRead.connect(self._on_ready_read)
+        self._reply.finished.connect(self._on_finished)
+
+    def stop(self):
+        self._buffer = b''
+        if self._reply is None:
+            return
+        reply, self._reply = self._reply, None
+        try:
+            reply.readyRead.disconnect()
+            reply.finished.disconnect()
+        except TypeError:
+            pass  # nothing was connected
+        reply.abort()
+        reply.deleteLater()
+
+    def _on_ready_read(self):
+        # An exception in a Qt slot takes the whole process down, so nothing
+        # here is allowed to escape.
+        try:
+            if self._reply is None:
+                return
+            self._buffer += bytes(self._reply.readAll())
+            while True:
+                start = self._buffer.find(self.SOI)
+                if start < 0:
+                    break
+                end = self._buffer.find(self.EOI, start + 2)
+                if end < 0:
+                    break
+                jpeg = self._buffer[start:end + 2]
+                self._buffer = self._buffer[end + 2:]
+                image = QImage()
+                if image.loadFromData(jpeg, 'JPG'):
+                    self.frame.emit(image)
+            if len(self._buffer) > self.MAX_BUFFER:
+                # Not MJPEG, or sync is lost. Drop it rather than grow forever.
+                print('WARNING: Blue Iris stream is not returning JPEG frames')
+                self._buffer = b''
+        except Exception:
+            print('WARNING:', traceback.format_exc())
+
+    def _on_finished(self):
+        try:
+            if self._reply is None:
+                return
+            reply, self._reply = self._reply, None
+            if reply.error() != QNetworkReply.NetworkError.NoError:
+                self.failed.emit(reply.errorString())
+            reply.deleteLater()
+        except Exception:
+            print('WARNING:', traceback.format_exc())
+
+
+class CameraPanel(QtWidgets.QFrame):
+    """Large panel that puts a Blue Iris camera on screen when it trips an
+    alert, then fades back out (see blueiris_alert()). Tap it to dismiss early.
+    """
+
+    def __init__(self, parent, screen_width, screen_height):
+        QtWidgets.QFrame.__init__(self, parent)
+        # Same scrim and card treatment as AlertDetailPanel, so a camera reads
+        # as part of the clock rather than a window opening over the top of it.
+        self.setObjectName('cameraScrim')
+        self.setGeometry(0, 0, screen_width, screen_height)
+        self.setStyleSheet('#cameraScrim { background-color: rgba(0, 0, 0, 165); }')
+        self.hide()
+
+        card_w = int(screen_width * 0.88)
+        card_h = int(screen_height * 0.86)
+        card_x = int((screen_width - card_w) / 2)
+        card_y = int((screen_height - card_h) / 2)
+        pad = int(card_w * 0.018)
+
+        self.card = QtWidgets.QFrame(self)
+        self.card.setObjectName('cameraCard')
+        self.card.setGeometry(card_x, card_y, card_w, card_h)
+        self.card.setStyleSheet(
+            '#cameraCard { background-color: rgba(32, 32, 32, 240); '
+            'border: 2px solid rgba(220, 160, 40, 255); border-radius: ' +
+            str(int(card_w * 0.02)) + 'px; }')
+        self.card.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+
+        # The picture and nothing else: no camera name, no trigger text, no
+        # clock. Whatever the camera itself burns in is all that shows.
+        self.video_label = QtWidgets.QLabel(self.card)
+        self.video_label.setGeometry(pad, pad, card_w - pad * 2, card_h - pad * 2)
+        self.video_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.video_label.setStyleSheet(
+            'background-color: rgba(0, 0, 0, 255); color: #888888; '
+            'font-family:"Open Sans"; border-radius: 6px; '
+            'font-size: ' + str(int(16 * xscale)) + 'px;')
+
+        self._opacity_effect = QtWidgets.QGraphicsOpacityEffect(self)
+        self._opacity_effect.setOpacity(0.0)
+        self.setGraphicsEffect(self._opacity_effect)
+        self._anim = None
+        self._shown = False
+        self._slideshow_was_paused = None
+
+        self.stream = MjpegStream(self)
+        self.stream.frame.connect(self._on_frame)
+        self.stream.failed.connect(self._on_failed)
+
+        self.dismiss_timer = QtCore.QTimer(self)
+        self.dismiss_timer.setSingleShot(True)
+        self.dismiss_timer.timeout.connect(self.dismiss)
+
+    def show_camera(self, url, seconds):
+        """Put a camera up. A second alert while one is already showing swaps
+        to the new camera and restarts the countdown, rather than queueing."""
+        self.video_label.setText('Connecting to camera...')
+
+        if url:
+            self.stream.start(url)
+        else:
+            self.video_label.setText('blueiris_server is not set in Config.py')
+
+        self.dismiss_timer.start(int(max(1, seconds) * 1000))
+        self._pause_slideshow()
+        self.raise_()
+        if not self._shown:
+            self._shown = True
+            self.show()
+            self._fade(1.0)
+
+    def dismiss(self):
+        if not self._shown:
+            return
+        self._shown = False
+        self.dismiss_timer.stop()
+        self.stream.stop()
+        self._resume_slideshow()
+        self._fade(0.0)
+
+    def mousePressEvent(self, event):
+        self.dismiss()
+
+    # -- slideshow ------------------------------------------------------------
+
+    def _pause_slideshow(self):
+        """Hold the photos while a camera is up: nothing is visible behind this
+        panel, so decoding them is wasted work on a Pi."""
+        if not Config.useslideshow or self._slideshow_was_paused is not None:
+            return
+        try:
+            self._slideshow_was_paused = objimage1.pause
+            objimage1.pause = True
+        except Exception:
+            print('WARNING:', traceback.format_exc())
+
+    def _resume_slideshow(self):
+        if self._slideshow_was_paused is None:
+            return
+        try:
+            # Restore what it was, so a slideshow paused by hand with F8 stays
+            # paused once the camera goes away.
+            objimage1.pause = self._slideshow_was_paused
+        except Exception:
+            print('WARNING:', traceback.format_exc())
+        self._slideshow_was_paused = None
+
+    # -- stream ---------------------------------------------------------------
+
+    def _on_frame(self, image):
+        if not self._shown:
+            return
+        pixmap = QPixmap.fromImage(image).scaled(
+            self.video_label.size(),
+            Qt.AspectRatioMode.KeepAspectRatio,
+            Qt.TransformationMode.SmoothTransformation)
+        self.video_label.setPixmap(pixmap)
+
+    def _on_failed(self, message):
+        print('ERROR: Blue Iris stream: ' + message)
+        if self._shown and self.video_label.pixmap().isNull():
+            self.video_label.setText('Camera unavailable\n' + message)
+
+    # -- presentation ---------------------------------------------------------
+
+    def _fade(self, target):
+        if self._anim is not None:
+            self._anim.stop()
+            self._anim.deleteLater()
+        if target > 0:
+            self.show()
+        anim = QtCore.QPropertyAnimation(self._opacity_effect, b'opacity', self)
+        anim.setDuration(350)
+        anim.setStartValue(self._opacity_effect.opacity())
+        anim.setEndValue(target)
+        if target == 0:
+            anim.finished.connect(self.hide)
+        self._anim = anim
+        anim.start()
+
+
+class BlueIrisListener(QtCore.QObject):
+    """Answers the "Web request" alert action Blue Iris fires when a camera
+    trips. Deliberately not a web server: it reads one request line, checks the
+    token, replies, and hangs up.
+    """
+
+    triggered = QtCore.pyqtSignal(dict)
+
+    MAX_REQUEST_BYTES = 4096
+
+    def __init__(self, parent=None):
+        QtCore.QObject.__init__(self, parent)
+        self._server = QtNetwork.QTcpServer(self)
+        self._server.newConnection.connect(self._on_connection)
+        self._buffers = {}
+
+    def listen(self, port):
+        if not self._server.listen(QtNetwork.QHostAddress.SpecialAddress.Any, int(port)):
+            print('ERROR: Blue Iris listener could not bind port %s: %s'
+                  % (port, self._server.errorString()))
+            return False
+        print('INFO: Blue Iris listener ready on port %s' % port)
+        return True
+
+    def stop(self):
+        self._server.close()
+        for sock in list(self._buffers):
+            self._cleanup(sock)
+
+    def _on_connection(self):
+        try:
+            while self._server.hasPendingConnections():
+                sock = self._server.nextPendingConnection()
+                self._buffers[sock] = b''
+                sock.readyRead.connect(lambda s=sock: self._on_ready_read(s))
+                sock.disconnected.connect(lambda s=sock: self._cleanup(s))
+        except Exception:
+            print('WARNING:', traceback.format_exc())
+
+    def _on_ready_read(self, sock):
+        try:
+            data = self._buffers.get(sock, b'') + bytes(sock.readAll())
+            self._buffers[sock] = data
+            # The request line is all that matters, but wait for the end of it
+            # so a split packet isn't misread as a truncated URL.
+            if b'\n' not in data and len(data) < self.MAX_REQUEST_BYTES:
+                return
+            self._handle(sock, data)
+        except Exception:
+            print('WARNING:', traceback.format_exc())
+            self._respond(sock, '500 Internal Server Error')
+
+    def _handle(self, sock, data):
+        line = data.split(b'\n', 1)[0].decode('utf-8', 'replace').strip()
+        parts = line.split(' ')
+        if len(parts) < 2 or parts[0].upper() not in ('GET', 'POST', 'HEAD'):
+            self._respond(sock, '400 Bad Request')
+            return
+
+        peer = sock.peerAddress().toString()
+        if peer.startswith('::ffff:'):
+            peer = peer[7:]  # IPv4 arriving on a dual-stack socket
+
+        allowed = getattr(Config, 'blueiris_allow_from', None) or []
+        if allowed and peer not in allowed:
+            print('WARNING: camera alert from %s ignored (not in blueiris_allow_from)' % peer)
+            self._respond(sock, '403 Forbidden')
+            return
+
+        params = dict(parse_qsl(urlparse(parts[1]).query, keep_blank_values=True))
+        token = getattr(Config, 'blueiris_token', '') or ''
+        if token and params.get('token', '') != token:
+            print('WARNING: camera alert from %s ignored (wrong token)' % peer)
+            self._respond(sock, '403 Forbidden')
+            return
+
+        self._respond(sock, '200 OK')
+        self.triggered.emit(params)
+
+    def _respond(self, sock, status):
+        try:
+            body = status.split(' ', 1)[-1].encode('utf-8')
+            sock.write(('HTTP/1.1 %s\r\nContent-Type: text/plain\r\n'
+                        'Content-Length: %d\r\nConnection: close\r\n\r\n'
+                        % (status, len(body))).encode('ascii') + body)
+            sock.flush()
+            sock.disconnectFromHost()
+        except Exception:
+            print('WARNING:', traceback.format_exc())
+
+    def _cleanup(self, sock):
+        self._buffers.pop(sock, None)
+        sock.deleteLater()
+
+
+def blueiris_stream_url(camera):
+    """MJPEG URL for one camera, scaled down by Blue Iris rather than the Pi."""
+    server = (getattr(Config, 'blueiris_server', '') or '').rstrip('/')
+    if not server or not camera:
+        return None
+    if '://' not in server:
+        server = 'http://' + server
+    url = '%s/mjpg/%s?w=%d' % (server, quote(camera),
+                               int(getattr(Config, 'blueiris_stream_width', 640)))
+    user = getattr(Config, 'blueiris_user', '') or ''
+    if user:
+        url += '&user=%s&pw=%s' % (quote(user),
+                                   quote(getattr(Config, 'blueiris_password', '') or ''))
+    return url
+
+
+def blueiris_alert(params):
+    """A Blue Iris camera tripped. Put it on screen if it is one we asked for.
+
+    Blue Iris fills the query string from its own macros, so &CAM is the short
+    camera name and &MEMO carries the ONVIF/AI detail the rule matched (for
+    Tapo cameras that is text like 'People' or 'IsPet').
+    """
+    camera = (params.get('cam') or params.get('camera') or '').strip()
+    memo = (params.get('memo') or '').strip()
+
+    if not camera:
+        print('WARNING: camera alert with no ?cam= parameter, ignored')
+        return
+
+    wanted = getattr(Config, 'blueiris_cameras', None) or []
+    if wanted and camera.lower() not in [str(c).lower() for c in wanted]:
+        print('INFO: camera alert from %s ignored (not in blueiris_cameras)' % camera)
+        return
+
+    triggers = getattr(Config, 'blueiris_triggers', None) or []
+    if triggers and not any(str(t).lower() in memo.lower() for t in triggers):
+        print('INFO: camera alert from %s ignored (memo "%s" matched no trigger)'
+              % (camera, memo))
+        return
+
+    print('INFO: camera alert from %s (%s)' % (camera, memo or 'no memo'))
+    cameraPanel.show_camera(blueiris_stream_url(camera),
+                            getattr(Config, 'blueiris_show_seconds', 20))
 
 
 class SlideShow(QtWidgets.QLabel):
@@ -3455,6 +3829,9 @@ def myquit(signum, frame):
         flighttimer.stop()
     if Config.useslideshow:
         objimage1.stop()
+    if blueirisListener is not None:
+        blueirisListener.stop()
+    cameraPanel.stream.stop()
     release_display_sleep()
 
     QtCore.QTimer.singleShot(30, realquit)
@@ -3752,6 +4129,7 @@ weatherplayer = None
 lastkeytime = 0
 last_brightness_percent = -1
 flighttimer = None
+blueirisListener = None  # created in qtstart() only when blueiris_enabled
 sleep_inhibit_process = None
 keepalive_timer = None
 
@@ -4139,6 +4517,9 @@ add_text_shadow(bottom)
 # The detail panel is a direct child of w (like brightness_overlay) so it sits
 # on top of both frame1/frame2 and is reachable from either page.
 alertDetailPanel = AlertDetailPanel(w, width, height)
+# Sits above everything, including the alert detail panel: a camera going off
+# is the one thing that should interrupt whatever else is on screen.
+cameraPanel = CameraPanel(w, width, height)
 # Narrow enough to clear the weather block on the left and the forecast column
 # on the right; both start ~300 design units in from their edge.
 ALERT_X = 0.22

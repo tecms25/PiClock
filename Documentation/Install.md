@@ -492,6 +492,58 @@ ADS-B feed. No account or API key is needed, but it is someone else's
 bandwidth being spent, which is why this is off unless you turn it on. If you
 enable it, keep `flight_poll_seconds` reasonable.
 
+#### Blue Iris camera alerts
+If you run [Blue Iris](https://blueirissoftware.com/), a camera can put itself
+on screen the moment it trips an alert, then the clock comes back. Nothing is
+polled - Blue Iris calls PiClock, so the popup is as quick as the alert itself.
+
+Settings:
+
+  * `blueiris_enabled` - 1 to enable, 0 to disable (off by default)
+  * `blueiris_listen_port` - port PiClock listens on (default 8127)
+  * `blueiris_token` - shared secret, must match the `token=` in the web request
+  * `blueiris_server` - Blue Iris web server, e.g. `http://192.168.1.10:81`
+  * `blueiris_user` / `blueiris_password` - a Blue Iris user allowed to view cameras
+  * `blueiris_cameras` - which cameras may pop up, by short name; empty means any
+  * `blueiris_triggers` - only pop up when the alert memo mentions one of these
+  * `blueiris_show_seconds` - how long the camera stays up
+  * `blueiris_stream_width` - width Blue Iris scales the stream to before sending
+  * `blueiris_allow_from` - optional source address allow-list
+
+In Blue Iris, open the camera's settings, go to **Alerts**, and add an
+**On alert** action of **Web request**. Point it at the clock:
+
+```
+http://<pi-address>:8127/alert?token=<blueiris_token>&cam=&CAM&memo=&MEMO
+```
+
+`&CAM` and `&MEMO` are Blue Iris macros - it substitutes the camera's short
+name and the alert memo before sending. Check the macro list in your version of
+Blue Iris if those names differ. Repeat for each camera you want on the clock.
+
+The memo is worth thinking about, because it becomes the caption *and* it is
+what `blueiris_triggers` matches against. If your cameras send ONVIF events the
+memo is the raw rule text, something like
+`RuleEngine/PeopleDetector/People IsPeople="true"`. With TP-Link Tapo cameras
+sending `IsPeople` and `IsPet` events, `blueiris_triggers = ['People']` then
+shows someone at the door and ignores the cat.
+
+You can put a friendlier label in the web request instead - `&memo=Person`
+reads better on a wall clock than a rule path does - but if you do, set
+`blueiris_triggers` to match what you actually send. The match is a plain
+case-insensitive substring test, so a trigger of `'People'` does **not** match a
+memo of `'Person'`. Either keep the ONVIF text, or change both together.
+
+The stream is pulled from Blue Iris, not from the cameras, so the cameras
+themselves stay off the internet and PiClock only needs the one Blue Iris
+login. PiClock decodes every frame it is sent, so if the clock stutters while a
+camera is up, lower `blueiris_stream_width` rather than the frame rate.
+
+A note on the listener: it accepts a request from anywhere on your network
+unless you set `blueiris_token` (and optionally `blueiris_allow_from`). Set the
+token. It is the only thing stopping something else on the LAN putting a camera
+on your wall.
+
 #### Screen brightness and always-on display
 PiClock can automatically dim the whole display at night and brighten it back
 up during the day, on a schedule you set using a 24-hour clock. This is a
