@@ -49,7 +49,7 @@ flight_poll_seconds = 30  # how often to look for aircraft
 # but an invisible speck at 30nm. Lower this to catch more, raise it for only
 # the ones nearly straight up. 30 is a handful at a time.
 flight_min_elevation = 30
-flight_search_radius_nm = 50  # how far out to ask for aircraft (max 250)
+flight_search_radius_nm = 150  # how far out to ask for aircraft (max 250)
 
 # Severe weather warning bubble, from api.weather.gov
 noaa_alerts_enabled = 1  # 1 to show a warning bubble for active NOAA/NWS alerts, 0 to disable
