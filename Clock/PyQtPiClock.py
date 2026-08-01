@@ -1984,22 +1984,44 @@ class InfoBubble(QtWidgets.QFrame):
         return None
 
     def set_items(self, items):
-        # Remember what is on screen so a refresh can stay on it.
+        """Replace the list, disturbing what is on screen as little as possible.
+
+        A refresh is not a reason to change what the viewer is reading. If the
+        item on screen is still in the new list it keeps its place and its
+        remaining time, and only its text is refreshed. If it has gone, the
+        rotation carries on from the same position rather than snapping back
+        to the start.
+        """
         showing = None
+        was_at = self.index
         if self.items and self.index < len(self.items):
             showing = self.item_key(self.items[self.index])
 
         self.items = items
-        self.index = 0
+        if not items:
+            self.index = 0
+            self.cycle_timer.stop()
+            self._update_visibility()
+            return
+
+        still_here = None
         if showing is not None:
             for i, item in enumerate(items):
                 if self.item_key(item) == showing:
-                    self.index = i
+                    still_here = i
                     break
-        # Drop any pending cycle from the previous set; _show_current() re-arms
-        # it when there is still more than one item to rotate through.
-        self.cycle_timer.stop()
-        if items:
+
+        if still_here is not None:
+            # Same item: update the wording in place and let its dwell run out
+            # on the original schedule.
+            self.index = still_here
+            self._render()
+            if not self.cycle_timer.isActive():
+                self._arm_cycle()
+        else:
+            # It has gone. Carry on from where the rotation had reached.
+            self.index = min(was_at, len(items) - 1)
+            self.cycle_timer.stop()
             self._show_current()
         self._update_visibility()
 
@@ -2022,17 +2044,24 @@ class InfoBubble(QtWidgets.QFrame):
             self.index = (self.index + 1) % len(self.items)
             self._show_current()
 
-    def _show_current(self):
+    def _render(self):
+        """Put the current item on screen without touching its dwell."""
         title, ticker_text = self.format_item(
             self.items[self.index], self.index + 1, len(self.items))
         self.title_label.setText(title)
         self.ticker.set_text(ticker_text, self._ticker_style)
+
+    def _arm_cycle(self):
         if len(self.items) > 1:
             if self.DWELL_MS:
                 self.cycle_timer.start(self.DWELL_MS)
             else:
                 # Backstop only: normally _ticker_finished() gets there first.
                 self.cycle_timer.start(ALERT_CYCLE_MAX_MS)
+
+    def _show_current(self):
+        self._render()
+        self._arm_cycle()
 
     def _ticker_finished(self):
         """The line has run in full, so move on after a short beat. Restarting
