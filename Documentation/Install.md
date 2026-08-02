@@ -804,6 +804,37 @@ text.
 shown as `********`, and the log tail is scrubbed - PiClock logs the URLs it
 fetches and those carry your Mapbox and Tomorrow.io keys.
 
+**Audio streams** can be started and stopped from the Control page and play
+through the Pi's own speakers - a NOAA weather feed, a scanner, an internet
+radio station. `noaastream` is always offered first; anything else goes in
+`audio_streams`:
+
+```python
+audio_streams = [
+    {'name': 'County fire and EMS', 'url': 'https://example.com/feed.m3u8'},
+    {'name': 'Police dispatch', 'url': 'https://example.com/police.m3u8'},
+]
+```
+
+Only one plays at a time - starting another swaps it over - and while one is
+playing **the clock shows a small `▶ <name>` marker in its top right corner**,
+which stays visible even with the clock face hidden by F9. F2 still toggles the
+first stream from the keyboard.
+
+**A scanner feed almost always needs more than mpg123.** An `.m3u8` is an HLS
+playlist of segments, not an MP3 stream, and mpg123 cannot follow one. PiClock
+uses the first of `ffplay`, `mpv`, `cvlc` or `mpg123` that is installed and can
+handle the URL, so for HLS install one of:
+
+```
+sudo apt install ffmpeg     # provides ffplay - the smallest of the three
+sudo apt install mpv
+sudo apt install vlc
+```
+
+If none is present the panel says so rather than failing silently. Plain MP3
+streams keep working with mpg123 alone.
+
 **Live commands** are the same things the clock's own keys do - next/previous
 page, the slideshow controls, hiding the clock, the weather radio - and they
 happen on the screen immediately, without a restart. The panel passes them to

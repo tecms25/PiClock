@@ -301,3 +301,17 @@ web_session_hours = 12  # how long a sign-in lasts
 # 127.0.0.1 only, so it is never reachable from the network - the panel runs
 # on the same machine and is the only thing that talks to it.
 web_command_port = 8128
+
+# AUDIO STREAMS
+# Extra streams the web control panel can play through the Pi's speakers -
+# a scanner feed, an internet radio station. noaastream above is always
+# offered first, so this list is additional to it.
+# An .m3u8 (HLS) URL needs a player that understands segmented playlists:
+# mpg123 cannot. Install one with 'sudo apt install ffmpeg' (or mpv, or
+# vlc); plain MP3 streams work with mpg123 alone.
+# Example:
+# audio_streams = [
+#     {'name': 'County fire and EMS', 'url': 'https://example.com/feed.m3u8'},
+#     {'name': 'Police dispatch', 'url': 'https://example.com/police.m3u8'},
+# ]
+audio_streams = []

@@ -284,6 +284,16 @@ LBiNotVideo = ('not a video stream (server sent "%s") - check the Blue Iris '
                'credentials and blueiris_use_session_login')
 LBiNoContentType = 'no content type'
 
+# --- audio streams -----------------------------------------------------------
+# Shown in the corner of the screen while a stream is playing. %s is its name.
+LAudioPlaying = '▶ %s'
+LNoaaRadio = 'NOAA weather radio'
+LAudioUnknown = 'a stream'
+LAudioNoPlayer = ('no audio player is installed - try "sudo apt install '
+                  'mpg123"')
+LAudioNoHlsPlayer = ('%s needs a player that understands .m3u8 - try '
+                     '"sudo apt install ffmpeg", or mpv, or vlc')
+
 
 # =============================================================================
 # 9. SHARED BITS

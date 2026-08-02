@@ -207,6 +207,7 @@ def create_app(settings=None, secrets_path=SECRETS, audit_db=AUDIT_DB):
                                actions=control.listed(),
                                available=control.available(),
                                live=commands.grouped(),
+                               streams=commands.streams(),
                                service=status.service_status(),
                                events=audit.recent(audit_db))
 
@@ -220,7 +221,8 @@ def create_app(settings=None, secrets_path=SECRETS, audit_db=AUDIT_DB):
         name = request.form.get('command', '')
         ok, message = commands.send(name,
                                     settings.get('web_command_port', 8128),
-                                    app.config['COMMAND_TOKEN'])
+                                    app.config['COMMAND_TOKEN'],
+                                    stream=request.form.get('stream'))
         audit.record(audit_db, caller(), name, 'ok' if ok else 'failed', message)
         app.logger.info('%s sent command %s -> %s', caller(), name, message)
         return outcome(ok, message)

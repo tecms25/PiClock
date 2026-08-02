@@ -10,6 +10,7 @@ import math
 import os
 import platform
 import random
+import shutil
 import signal
 import subprocess
 import sys
@@ -611,6 +612,7 @@ def tick():
 
     now = datetime.datetime.now(tz=tzlocal.get_localzone())
     apply_brightness(get_brightness_percent(now))
+    check_audio_player()
     clockformat = getattr(Config, 'digitalformat', None) or Locale.LClockFormat
     timestr = clockformat.format(now)
     if clockformat.find('%I') > -1:
@@ -3014,54 +3016,179 @@ class CommandListener(RequestLineServer):
             return '403 Forbidden'
 
         name = params.get('do', '')
-        ok, message = run_command(name)
+        ok, message = run_command(name, params)
         print('INFO: panel command %r -> %s' % (name, message))
         return '200 %s' % message if ok else '400 %s' % message
 
 
+# Players that can be handed a stream URL, best first. Each entry is the
+# command without the URL, which is appended.
+#
+# mpg123 is last and deliberately excluded from HLS: an .m3u8 is a playlist of
+# segments, not an MP3 stream, and mpg123 cannot follow one. A scanner feed is
+# almost always HLS, so without ffmpeg, mpv or VLC installed there is nothing
+# on the machine that can play it - which is worth saying plainly rather than
+# failing quietly.
+AUDIO_PLAYERS = (
+    ('ffplay', ['ffplay', '-nodisp', '-autoexit', '-loglevel', 'error']),
+    ('mpv', ['mpv', '--no-video', '--really-quiet']),
+    ('cvlc', ['cvlc', '--intf', 'dummy', '--no-video', '--play-and-exit']),
+    ('mpg123', ['mpg123', '-q']),
+)
+HLS_CAPABLE = ('ffplay', 'mpv', 'cvlc')
+
+
+def is_hls(url):
+    return urlparse(url or '').path.lower().endswith(('.m3u8', '.m3u8/'))
+
+
+def audio_player_argv(url):
+    """The command to play this URL, or None if nothing installed can."""
+    for name, base in AUDIO_PLAYERS:
+        if is_hls(url) and name not in HLS_CAPABLE:
+            continue
+        if shutil.which(name):
+            return base + [url]
+    return None
+
+
+def audio_streams():
+    """Every stream that can be played, newest config style first.
+
+    noaastream is still honoured and comes first, so a config written before
+    audio_streams existed keeps working and adding streams is purely additive.
+    """
+    streams = []
+    noaa = (getattr(Config, 'noaastream', '') or '').strip()
+    if noaa:
+        streams.append({'name': Locale.LNoaaRadio, 'url': noaa})
+    for entry in getattr(Config, 'audio_streams', None) or []:
+        try:
+            url = (entry.get('url') or '').strip()
+            name = (entry.get('name') or '').strip() or url
+        except AttributeError:
+            continue  # not a dict; skip rather than stop the clock
+        if url:
+            streams.append({'name': name, 'url': url})
+    return streams
+
+
+def audio_playing_name():
+    """Name of the stream playing, or '' if none is."""
+    if audio_player is None or audio_index is None:
+        return ''
+    streams = audio_streams()
+    if 0 <= audio_index < len(streams):
+        return streams[audio_index]['name']
+    return Locale.LAudioUnknown
+
+
+def stop_audio_stream():
+    """Stop whatever is playing. Returns what it did."""
+    global audio_player, audio_index
+    if audio_player is None:
+        return 'nothing was playing'
+    was = audio_playing_name()
+    try:
+        audio_player.kill()
+    except OSError:
+        pass
+    audio_player = None
+    audio_index = None
+    update_audio_indicator()
+    return 'stopped %s' % was
+
+
+def play_audio_stream(index):
+    """Start one stream by index, stopping anything already playing."""
+    global audio_player, audio_index
+    streams = audio_streams()
+    try:
+        index = int(index)
+    except (TypeError, ValueError):
+        return False, 'that is not a stream number'
+    if not 0 <= index < len(streams):
+        return False, 'there is no stream %s' % index
+
+    stream = streams[index]
+    argv = audio_player_argv(stream['url'])
+    if argv is None:
+        if is_hls(stream['url']):
+            return False, (Locale.LAudioNoHlsPlayer % stream['name'])
+        return False, Locale.LAudioNoPlayer
+
+    stop_audio_stream()
+    try:
+        audio_player = Popen(argv, stdout=subprocess.DEVNULL,
+                             stderr=subprocess.DEVNULL)
+    except OSError as exc:
+        audio_player = None
+        audio_index = None
+        return False, 'could not start %s: %s' % (stream['name'], exc)
+    audio_index = index
+    update_audio_indicator()
+    return True, 'playing %s' % stream['name']
+
+
+def check_audio_player():
+    """Clear the indicator when a stream ends or the player dies.
+
+    Called once a second from tick(). A dropped feed or a player that exited on
+    its own would otherwise leave the on-screen indicator claiming something is
+    still playing.
+    """
+    global audio_player, audio_index
+    if audio_player is None:
+        return
+    if audio_player.poll() is None:
+        return
+    print('INFO: audio stream ended (%s)' % (audio_playing_name() or 'unknown'))
+    audio_player = None
+    audio_index = None
+    update_audio_indicator()
+
+
 def toggle_weather_radio():
-    """Start or stop the NOAA weather radio stream. Returns what it did."""
-    global weatherplayer
-    if weatherplayer is None:
-        weatherplayer = Popen(['mpg123', '-q', Config.noaastream])
-        return 'weather radio started'
-    weatherplayer.kill()
-    weatherplayer = None
-    return 'weather radio stopped'
+    """Start or stop the first stream. What F2 has always done."""
+    if audio_player is not None:
+        return stop_audio_stream()
+    if not audio_streams():
+        return 'no audio streams are configured'
+    return play_audio_stream(0)[1]
 
 
-def _cmd_next_page():
+def _cmd_next_page(params):
     nextframe(1)
     return 'showing the next page'
 
 
-def _cmd_prev_page():
+def _cmd_prev_page(params):
     nextframe(-1)
     return 'showing the previous page'
 
 
-def _cmd_next_image():
+def _cmd_next_image(params):
     if not Config.useslideshow:
         return 'the slideshow is switched off'
     objimage1.prev_next(1)
     return 'showing the next image'
 
 
-def _cmd_prev_image():
+def _cmd_prev_image(params):
     if not Config.useslideshow:
         return 'the slideshow is switched off'
     objimage1.prev_next(-1)
     return 'showing the previous image'
 
 
-def _cmd_slideshow_toggle():
+def _cmd_slideshow_toggle(params):
     if not Config.useslideshow:
         return 'the slideshow is switched off'
     objimage1.play_pause()
     return 'slideshow paused' if objimage1.pause else 'slideshow resumed'
 
 
-def _cmd_foreground_toggle():
+def _cmd_foreground_toggle(params):
     if foreGround.isVisible():
         foreGround.hide()
         return 'clock and weather hidden'
@@ -3069,7 +3196,7 @@ def _cmd_foreground_toggle():
     return 'clock and weather shown'
 
 
-def _cmd_hide_alert():
+def _cmd_hide_alert(params):
     if not alertDetailPanel.isVisible():
         return 'no alert detail was open'
     alertDetailPanel.hide()
@@ -3086,25 +3213,34 @@ COMMANDS = {
     'prev_image': _cmd_prev_image,
     'slideshow_toggle': _cmd_slideshow_toggle,
     'foreground_toggle': _cmd_foreground_toggle,
-    'radio_toggle': toggle_weather_radio,
+    'radio_toggle': lambda params: toggle_weather_radio(),
     'hide_alert': _cmd_hide_alert,
+    'audio_play': lambda params: play_audio_stream(params.get('stream', '')),
+    'audio_stop': lambda params: stop_audio_stream(),
+    'audio_status': lambda params: audio_playing_name() or 'nothing is playing',
 }
 
 
-def run_command(name):
+def run_command(name, params=None):
     """Carry out one named command. Returns (ok, message).
 
     The name is only ever a key into COMMANDS, so a request cannot reach
-    anything that is not listed there.
+    anything that is not listed there. Handlers are passed the query
+    parameters; most ignore them, the audio ones read a stream number.
     """
     handler = COMMANDS.get(name)
     if handler is None:
         return False, 'unknown command'
     try:
-        return True, handler() or 'done'
+        result = handler(params or {})
     except Exception:
         print('WARNING:', traceback.format_exc())
         return False, 'the clock could not do that'
+    # A handler may answer with its own (ok, message) when it can fail for
+    # ordinary reasons - no such stream, no player installed.
+    if isinstance(result, tuple):
+        return result
+    return True, result or 'done'
 
 
 def panel_command_token():
@@ -4467,6 +4603,9 @@ def myquit(signum, frame):
     if commandListener is not None:
         attempt('command listener', commandListener.stop)
     attempt('camera panel', cameraPanel.stop)
+    # A player is a child process; leaving it behind means the radio keeps
+    # playing to an empty screen after the clock has gone.
+    attempt('audio stream', stop_audio_stream)
     attempt('display sleep', release_display_sleep)
 
     QtCore.QTimer.singleShot(30, realquit)
@@ -4735,7 +4874,8 @@ lastmin = -1
 lastday = -1
 pdy = ''
 lasttimestr = ''
-weatherplayer = None
+audio_player = None   # the Popen playing a stream, or None
+audio_index = None    # which entry of audio_streams() it is
 lastkeytime = 0
 last_brightness_percent = -1
 flighttimer = None
@@ -5143,6 +5283,52 @@ alertrect = QtCore.QRect(
 alertBubble = AlertBubble(foreGround, alertrect, alertDetailPanel)
 # Same slot as the alert bar; update_bubble_priority() keeps them from clashing.
 flightBubble = FlightBubble(foreGround, alertrect)
+
+# Playing-now indicator. A child of w rather than foreGround, so hiding the
+# clock with F9 to look at the photo does not also hide the one thing telling
+# you the radio is on.
+#
+# Centred just under the alert/flight bubble slot rather than in a corner: the
+# top right belongs to the forecast column and the top left to the current
+# conditions, so an indicator in either overlaps live text. The band under the
+# bubbles is background, and is already where this layout puts things that come
+# and go.
+audioIndicator = QtWidgets.QLabel(w)
+audioIndicator.setObjectName('audioIndicator')
+audioIndicator.setStyleSheet(
+    '#audioIndicator { font-family:"Open Sans"; color: #f0f0f0;'
+    ' background-color: rgba(0, 0, 0, 150); border-radius: %dpx;'
+    ' padding: %dpx %dpx; font-size: %dpx; %s }'
+    % (int(9 * xscale), int(4 * yscale), int(10 * xscale),
+       int(20 * xscale * Config.fontmult), Config.fontattr))
+audioIndicator.setAlignment(Qt.AlignmentFlag.AlignCenter)
+audioIndicator.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+audioIndicator.hide()
+
+
+def update_audio_indicator():
+    """Show what is playing, or hide when nothing is."""
+    name = audio_playing_name()
+    if not name:
+        audioIndicator.hide()
+        return
+    audioIndicator.setText(Locale.LAudioPlaying % name)
+    # Sized to its text and centred, capped at the bubble width so a long
+    # stream name cannot run past the edges of the band it sits in.
+    audioIndicator.adjustSize()
+    span = min(audioIndicator.width(), int(width * ALERT_W))
+    if Config.layout == 'photo':
+        # Under the bubbles, which sit at the top in this layout.
+        top = mac_notch_inset + int(height * (PHOTO_ALERT_TOP + PHOTO_ALERT_H)
+                                    + 8 * yscale)
+    else:
+        # The classic layout keeps its bubble down by the footer, so the top of
+        # the screen is free.
+        top = mac_notch_inset + int(12 * yscale)
+    audioIndicator.setGeometry(int((width - span) / 2), top,
+                               span, audioIndicator.height())
+    audioIndicator.raise_()
+    audioIndicator.show()
 
 
 tzlatlng = pytz.utc

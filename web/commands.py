@@ -9,9 +9,13 @@ validated again by the clock against its own table, so a name that is not on
 both lists reaches nothing.
 """
 
+import os
+import sys
 import urllib.error
 import urllib.parse
 import urllib.request
+
+REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 # Mirrors COMMANDS in Clock/PyQtPiClock.py. 'key' is the keyboard shortcut that
 # does the same thing, shown so the page matches what is written on the clock.
@@ -37,12 +41,49 @@ CATALOGUE = (
     {'name': 'slideshow_toggle', 'label': 'Pause / resume', 'key': 'F8',
      'describe': 'Hold the slideshow on the current photo, or start it again.',
      'group': 'Slideshow'},
-    {'name': 'radio_toggle', 'label': 'Weather radio', 'key': 'F2',
-     'describe': 'Start or stop the NOAA weather radio stream.',
+    {'name': 'radio_toggle', 'label': 'Toggle first stream', 'key': 'F2',
+     'describe': 'Start or stop the first audio stream - what F2 does on the '
+                 'clock itself.',
      'group': 'Audio'},
 )
 
-NAMES = frozenset(entry['name'] for entry in CATALOGUE)
+NAMES = frozenset(entry['name'] for entry in CATALOGUE) | {
+    'audio_play', 'audio_stop', 'audio_status'}
+
+
+def streams():
+    """The audio streams the clock offers, read from Config.py.
+
+    Read rather than imported, like everything else the panel takes from the
+    config, so this process never executes it. The order must match
+    audio_streams() in the clock, because a stream is asked for by index:
+    noaastream first, then audio_streams.
+    """
+    sys.path.insert(0, REPO)
+    try:
+        import merge_config
+        text, _ = merge_config.read_text(os.path.join(REPO, 'conf', 'Config.py'))
+        values = merge_config.literal_settings(text)
+    except Exception:
+        return []
+    finally:
+        sys.path.pop(0)
+
+    found = []
+    noaa = (values.get('noaastream') or '').strip()
+    if noaa:
+        found.append({'name': 'NOAA weather radio', 'url': noaa})
+    for entry in values.get('audio_streams') or []:
+        if not isinstance(entry, dict):
+            continue
+        url = (entry.get('url') or '').strip()
+        if url:
+            found.append({'name': (entry.get('name') or '').strip() or url,
+                          'url': url})
+    for index, entry in enumerate(found):
+        entry['index'] = index
+        entry['hls'] = entry['url'].split('?')[0].lower().endswith('.m3u8')
+    return found
 
 GROUPS = ('Display', 'Slideshow', 'Audio')
 
@@ -55,7 +96,7 @@ def grouped():
             for group in GROUPS]
 
 
-def send(name, port, token):
+def send(name, port, token, stream=None):
     """Ask the running clock to do one thing. Returns (ok, message).
 
     Never raises. The clock not answering is the ordinary case when it has been
@@ -68,7 +109,16 @@ def send(name, port, token):
         return False, ('The command channel is not set up. Run '
                        'web/set_password.py, then restart the clock.')
 
-    query = urllib.parse.urlencode({'token': token, 'do': name})
+    fields = {'token': token, 'do': name}
+    if stream is not None:
+        # Sent as a number and checked again by the clock against its own
+        # list, so a stream index from a browser can only ever select one of
+        # the streams already in the config.
+        try:
+            fields['stream'] = int(stream)
+        except (TypeError, ValueError):
+            return False, 'That is not a stream number.'
+    query = urllib.parse.urlencode(fields)
     url = 'http://127.0.0.1:%d/command?%s' % (int(port), query)
     try:
         with urllib.request.urlopen(url, timeout=TIMEOUT_SECONDS) as reply:

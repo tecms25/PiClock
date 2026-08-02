@@ -55,6 +55,36 @@
 </div>
 
 <div class="card">
+  <h2>Audio streams <span class="count">{{ streams|length }}</span></h2>
+  {% if streams %}
+  <p class="muted">Played through the Pi's own speakers. One at a time -
+    starting another swaps it over. While something is playing the clock shows
+    an indicator in its top right corner.</p>
+  <div class="actions">
+    {% for s in streams %}
+    <form method="post" action="{{ url_for('command') }}" data-live>
+      <input type="hidden" name="csrf" value="{{ csrf_token() }}">
+      <input type="hidden" name="command" value="audio_play">
+      <input type="hidden" name="stream" value="{{ s.index }}">
+      <button type="submit" class="secondary">Play</button>
+      <span class="muted">{{ s.name }}{% if s.hls %} <kbd>HLS</kbd>{% endif %}</span>
+    </form>
+    {% endfor %}
+    <form method="post" action="{{ url_for('command') }}" data-live>
+      <input type="hidden" name="csrf" value="{{ csrf_token() }}">
+      <input type="hidden" name="command" value="audio_stop">
+      <button type="submit">Stop</button>
+      <span class="muted">Silence whatever is playing.</span>
+    </form>
+  </div>
+  {% else %}
+  <p class="muted">None configured. Set <code>noaastream</code> or
+    <code>audio_streams</code> in
+    <a href="{{ url_for('settings_page') }}">Settings</a>.</p>
+  {% endif %}
+</div>
+
+<div class="card">
   <h2>Activity <span class="count" id="activity-count">{{ events|length }}</span></h2>
   <table>
     <thead>
