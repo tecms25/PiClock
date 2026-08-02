@@ -1,0 +1,59 @@
+{% extends "base.html" %}
+{% block title %}Control - PiClock{% endblock %}
+{% block content %}
+
+<div class="card">
+  <h2>Clock service</h2>
+  {% if service.available %}
+  <p class="state {{ 'good' if service.active == 'active' else 'bad' }}">{{ service.active }}</p>
+  {% else %}
+  <p class="state unknown">unknown</p>
+  <p class="muted">{{ service.note }}</p>
+  {% endif %}
+</div>
+
+<div class="card">
+  <h2>Actions</h2>
+  {% if not available %}
+  <p class="muted">systemd user services are not available on this machine, so
+    these cannot be run from here.</p>
+  {% endif %}
+  <div class="actions">
+    {% for a in actions %}
+    <form method="post" action="{{ url_for('action') }}"
+          {% if a.confirm %}onsubmit="return confirm('{{ a.describe }}\n\nGo ahead?');"{% endif %}>
+      <input type="hidden" name="csrf" value="{{ csrf_token() }}">
+      <input type="hidden" name="action" value="{{ a.name }}">
+      <button type="submit" class="{{ 'danger' if a.danger }}"
+              {% if not available %}disabled{% endif %}>{{ a.label }}</button>
+      <span class="muted">{{ a.describe }}</span>
+    </form>
+    {% endfor %}
+  </div>
+</div>
+
+<div class="card">
+  <h2>Activity <span class="count">{{ events|length }}</span></h2>
+  {% if events %}
+  <table>
+    <thead>
+      <tr><th>When</th><th>From</th><th>Action</th><th>Outcome</th><th>Detail</th></tr>
+    </thead>
+    <tbody>
+    {% for e in events %}
+      <tr>
+        <td>{{ e.at }}</td>
+        <td>{{ e.address }}</td>
+        <td>{{ e.action }}</td>
+        <td class="{{ 'good' if e.outcome == 'ok' else 'bad' }}">{{ e.outcome }}</td>
+        <td>{{ e.detail }}</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p class="muted">Nothing recorded yet.</p>
+  {% endif %}
+</div>
+
+{% endblock %}

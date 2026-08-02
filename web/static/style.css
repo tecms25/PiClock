@@ -147,4 +147,44 @@ button {
 }
 
 button.secondary { background: transparent; color: var(--muted); border: 1px solid var(--line); }
+button.danger { background: var(--bad); }
 button:disabled { opacity: .5; cursor: not-allowed; }
+
+nav { display: flex; gap: .25rem; margin-right: auto; margin-left: 1.5rem; }
+
+nav a {
+  padding: .35rem .75rem;
+  border-radius: 6px;
+  color: var(--muted);
+  text-decoration: none;
+  font-size: .95rem;
+}
+
+nav a:hover { background: var(--bg); color: var(--text); }
+nav a.here { background: var(--bg); color: var(--text); font-weight: 600; }
+
+/* One row per action: the button, then what it will do. Stacks on a phone. */
+.actions { display: grid; gap: .75rem; }
+
+.actions form {
+  display: flex;
+  align-items: center;
+  gap: .85rem;
+  flex-wrap: wrap;
+}
+
+.actions button { min-width: 6.5rem; }
+
+.flash {
+  padding: .7rem .9rem;
+  border-radius: 8px;
+  border: 1px solid var(--line);
+  background: var(--card);
+  margin: 0 0 1rem;
+}
+
+.flash.ok { border-left: 4px solid var(--good); }
+.flash.error { border-left: 4px solid var(--bad); }
+
+td.good { color: var(--good); }
+td.bad { color: var(--bad); }

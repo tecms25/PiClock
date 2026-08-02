@@ -10,12 +10,26 @@
 <header>
   <h1>PiClock</h1>
   {% if session.get('authenticated') %}
+  <nav>
+    <a href="{{ url_for('index') }}"
+       class="{{ 'here' if request.endpoint == 'index' }}">Status</a>
+    <a href="{{ url_for('control_page') }}"
+       class="{{ 'here' if request.endpoint in ('control_page', 'action') }}">Control</a>
+  </nav>
   <form method="post" action="{{ url_for('logout') }}">
+    <input type="hidden" name="csrf" value="{{ csrf_token() }}">
     <button type="submit" class="secondary">Sign out</button>
   </form>
   {% endif %}
 </header>
 <main>
+{% with messages = get_flashed_messages(with_categories=true) %}
+  {% if messages %}
+    {% for category, message in messages %}
+    <p class="flash {{ category }}">{{ message }}</p>
+    {% endfor %}
+  {% endif %}
+{% endwith %}
 {% block content %}{% endblock %}
 </main>
 </body>

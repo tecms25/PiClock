@@ -729,9 +729,16 @@ at boot, change `-n` to `-d 15` in the unit's `ExecStart` to make the clock wait
 
 ### Web control panel
 
-An HTTPS page for checking on the clock from another machine on your network.
-This first version is **read only** - it shows the service state, the clock
-process, a log tail and your current settings, but changes nothing.
+An HTTPS page for checking on and controlling the clock from another machine on
+your network. It has two pages:
+
+  * **Status** - service state, the clock process, a log tail and your current
+    settings, all read only
+  * **Control** - start, restart and stop the clock, and the record of who did
+    what and when
+
+Editing settings from the panel is not built yet; `conf/Config.py` is still
+edited by hand.
 
 The easiest way to set it up is to run the updater, which offers the whole
 thing - certificate, password, `web_enabled = 1`, and the systemd service - and
@@ -798,6 +805,21 @@ text.
 **Credentials are never displayed.** Settings whose names look like secrets are
 shown as `********`, and the log tail is scrubbed - PiClock logs the URLs it
 fetches and those carry your Mapbox and Tomorrow.io keys.
+
+**Actions are a fixed list.** Start, restart and stop are entries in a table in
+`web/control.py`, each holding the exact command to run. What the browser sends
+is only ever a lookup key into that table - it is never put into a command, and
+nothing runs through a shell - so a request cannot ask for anything that is not
+on the list. Stop and restart also need confirming in the browser.
+
+**Every state-changing request carries a CSRF token** tied to your session, on
+top of the `SameSite=Lax` cookie. Stopping the clock is worth two controls.
+
+**Everything the panel does is recorded** in `logs/panel-audit.db`, a SQLite
+file at mode 0600: time, source address, action and outcome, including refused
+sign-ins. It is shown at the bottom of the Control page. Configuration
+deliberately stays in `conf/Config.py` - a database would not make it any safer
+and would lose the comments that document it.
 
 It runs the Werkzeug server, which is right for one user on a LAN but is not a
 hardened public web server. Do not expose port 8443 to the internet; reach it

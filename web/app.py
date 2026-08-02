@@ -12,21 +12,25 @@ machine its owner believes is switched off.
 
 import datetime
 import os
+import secrets as secrets_module
 import ssl
 import sys
 
-from flask import (Flask, jsonify, redirect, render_template, request,
+from flask import (Flask, flash, jsonify, redirect, render_template, request,
                    session, url_for)
 from werkzeug.security import check_password_hash
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
+import audit                                                   # noqa: E402
+import control                                                 # noqa: E402
 import security                                                # noqa: E402
 import status                                                  # noqa: E402
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 CONF = os.path.join(REPO, 'conf')
 SECRETS = os.path.join(CONF, 'web_secret.json')
+AUDIT_DB = os.path.join(REPO, 'logs', 'panel-audit.db')
 
 DEFAULTS = {
     'web_enabled': 0,
@@ -55,7 +59,7 @@ def panel_settings():
     return values
 
 
-def create_app(settings=None, secrets_path=SECRETS):
+def create_app(settings=None, secrets_path=SECRETS, audit_db=AUDIT_DB):
     settings = settings or panel_settings()
     secrets = security.read_secrets(secrets_path)
 
@@ -87,6 +91,16 @@ def create_app(settings=None, secrets_path=SECRETS):
         """
         return request.remote_addr or ''
 
+    def csrf_token():
+        """This session's CSRF token, minted on first use."""
+        token = session.get('csrf')
+        if not token:
+            token = secrets_module.token_urlsafe(32)
+            session['csrf'] = token
+        return token
+
+    app.jinja_env.globals['csrf_token'] = csrf_token
+
     @app.before_request
     def gate():
         # First gate, ahead of everything including the login form.
@@ -94,7 +108,22 @@ def create_app(settings=None, secrets_path=SECRETS):
             app.logger.warning('refused %s (not a private address)', caller())
             return ('This panel is reachable from local networks only.\n',
                     403, {'Content-Type': 'text/plain'})
-        # Second gate. The login page and the stylesheet are the only things
+
+        # Second gate: nothing may change state without a token that came from
+        # a page we served. SESSION_COOKIE_SAMESITE='Lax' already stops a
+        # browser sending the session cookie on a cross-site POST, but stopping
+        # the clock is worth two controls rather than one.
+        if request.method == 'POST':
+            sent = request.form.get('csrf', '')
+            held = session.get('csrf', '')
+            if not (held and secrets_module.compare_digest(sent, held)):
+                app.logger.warning('CSRF check failed from %s on %s',
+                                   caller(), request.path)
+                return ('This form expired or did not come from the panel. '
+                        'Reload the page and try again.\n',
+                        400, {'Content-Type': 'text/plain'})
+
+        # Third gate. The login page and the stylesheet are the only things
         # served without a session.
         if request.endpoint in ('login', 'static'):
             return None
@@ -125,9 +154,15 @@ def create_app(settings=None, secrets_path=SECRETS):
             elif check_password_hash(app.config['PASSWORD_HASH'],
                                      request.form.get('password', '')):
                 throttle.record_success(caller())
+                audit.record(audit_db, caller(), 'sign in', 'ok')
+                # Cleared rather than updated so the pre-login session id and
+                # CSRF token cannot be reused: signing in gets a fresh one.
                 session.clear()
                 session['authenticated'] = True
                 session.permanent = True
+                # Minted here rather than left to whichever template happens to
+                # ask first, so a signed-in session always has one.
+                csrf_token()
                 target = request.args.get('next', '')
                 # Only ever redirect within this site; an absolute URL here
                 # would turn the login form into an open redirect.
@@ -137,18 +172,45 @@ def create_app(settings=None, secrets_path=SECRETS):
             else:
                 throttle.record_failure(caller())
                 app.logger.warning('failed login from %s', caller())
+                audit.record(audit_db, caller(), 'sign in', 'refused',
+                             'wrong password')
                 error = 'Incorrect password.'
                 wait = throttle.locked_for(caller())
         return render_template('login.html', error=error, wait=wait), (401 if error else 200)
 
     @app.route('/logout', methods=['POST'])
     def logout():
+        audit.record(audit_db, caller(), 'sign out', 'ok')
         session.clear()
         return redirect(url_for('login'))
 
     @app.route('/')
     def index():
         return render_template('status.html', data=status.snapshot())
+
+    @app.route('/control')
+    def control_page():
+        return render_template('control.html',
+                               actions=control.listed(),
+                               available=control.available(),
+                               service=status.service_status(),
+                               events=audit.recent(audit_db))
+
+    @app.route('/action', methods=['POST'])
+    def action():
+        """Carry out one allowlisted action.
+
+        The submitted name is only ever a key into control.ACTIONS; an
+        unrecognised one is refused there before any process is started.
+        """
+        name = request.form.get('action', '')
+        ok, message = control.run(name)
+        if not audit.record(audit_db, caller(), name,
+                            'ok' if ok else 'failed', message):
+            message += ' (this could not be written to the audit log)'
+        app.logger.info('%s requested %s -> %s', caller(), name, message)
+        flash(message, 'ok' if ok else 'error')
+        return redirect(url_for('control_page'))
 
     @app.route('/api/status')
     def api_status():
