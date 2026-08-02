@@ -108,7 +108,6 @@ LHumidity = 'Humidity: '
 LWind = 'Wind: '
 Lgusting = ' Gusts: '
 LFeelslike = 'Feels Like: '
-LInsideTemp = 'Inside Temp '
 
 # --- forecast ----------------------------------------------------------------
 LRain = '· Rain: '

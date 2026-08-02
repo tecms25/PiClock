@@ -2,9 +2,8 @@
 # Installer for PiClock - standard software-only setup.
 # Sets up the virtual environment, Python packages, and config files needed
 # to run the clock, weather, radar, slideshow, and NOAA alert/radio features.
-# Does NOT set up optional hardware add-ons (GPIO buttons, IR remote,
-# temperature sensors, NeoPixel LEDs) - see Documentation/Install.md if you
-# need those.
+# Does NOT set up the optional GPIO buttons - see Documentation/Install.md if
+# you need those.
 
 set -e
 
@@ -365,7 +364,7 @@ else
   fi
 fi
 
-chmod +x startup.sh switcher.sh update.sh PiClock.desktop 2>/dev/null || true
+chmod +x startup.sh update.sh PiClock.desktop 2>/dev/null || true
 
 if [ "$OS_NAME" = "Linux" ] && [ -n "$XDG_CURRENT_DESKTOP$DISPLAY" ]; then
   echo ""

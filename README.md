@@ -56,7 +56,7 @@ The early days and evolution of it are chronicled on my blog:
 If you want to build your own, I'd suggest starting with the overview:
 [Overview of the PiClock](Documentation/Overview.md)
 
-To install the PiClock on your Raspberry Pi, follow these instructions (all the extra hardware (IR Remote, GPIO buttons, Temperature, LEDs) are optional):
+To install the PiClock on your Raspberry Pi, follow these instructions (the extra hardware (GPIO buttons) is optional):
 [Install Instructions for PiClock](Documentation/Install.md)
 
 If you want to use the PiClock on a different desktop (not your Raspberry Pi), I'd suggest using these instructions:

@@ -62,18 +62,6 @@ fi
 echo "Activating virtual environment..."
 source venv/bin/activate || exit
 
-# NeoPixel AmbiLights
-echo "Checking for NeoPixels Ambilight..."
-cd Leds || exit
-if python3 -c "import rpi_ws281x" >/dev/null 2>&1; then
-  pgrep -f NeoAmbi.py
-  if [ $? -eq 1 ]; then
-    echo "Starting NeoPixel Ambilight Service..."
-    python3 NeoAmbi.py &
-  fi
-fi
-cd ..
-
 echo "Checking for GPIO Buttons..."
 # gpio button to keyboard input (Button/gpio-keys is a compiled ARM/Linux
 # binary; skip it on non-Linux dev machines where it can't execute at all)
@@ -82,18 +70,6 @@ if [ "$(uname -s)" = "Linux" ] && [ -x Button/gpio-keys ]; then
   if [ $? -eq 1 ]; then
     echo "Starting gpio-keys Service..."
     Button/gpio-keys 23:KEY_SPACE 24:KEY_F2 25:KEY_UP &
-  fi
-fi
-
-echo "Checking for Temperature Sensors..."
-# for temperature sensor(s) on One Wire bus
-if python3 -c "import w1thermsensor" >/dev/null 2>&1; then
-  pgrep -f TempServer.py
-  if [ $? -eq 1 ]; then
-    echo "Starting Temperature Service..."
-    cd Temperature || exit
-    python3 TempServer.py &
-    cd ..
   fi
 fi
 

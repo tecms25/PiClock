@@ -35,7 +35,6 @@ Just change the Items below.
   - Overscan: (Initially leave as default, but if your monitor has extra
     black area on the border, or bleeds off the edge, then change this)
  - Interfaces
-  - 1-Wire Enable (for the inside temperature, DS18B20 if you're using it)
   - SSH is handy (if you'd like to connect to your clock from another computer)
   - VNC can be handy  (same reason as ssh)
 
@@ -86,8 +85,8 @@ git clone https://github.com/USERNAME/PiClock.git
 Once that is done, you'll have a new directory called PiClock.
 
 ### Quick install (recommended)
-For a standard install - no GPIO buttons, IR remote, temperature sensors, or
-NeoPixel LEDs - an installer script can do the rest of this section for you:
+For a standard install - no GPIO buttons - an installer script can do the rest
+of this section for you:
 it creates the virtual environment, installs PyQt6 and the required Python
 packages (offering to use `apt` for `python3-pyqt6`/`mpg123` on Raspberry Pi
 OS), installs the bundled Open Sans fonts from the `fonts` folder for the
@@ -105,9 +104,8 @@ It's safe to run again later - it won't overwrite an existing
 `conf/ApiKeys.py` or `conf/Config.py` unless you explicitly opt back into
 the interactive prompts. If you skip the prompts (or need settings the
 installer doesn't ask about, like the radar map centers/markers), continue
-with the manual steps below. If you need the optional hardware add-ons (GPIO
-buttons, IR remote, temperature sensors, NeoPixel LEDs), follow the manual
-steps in this section instead.
+with the manual steps below. If you need the optional GPIO buttons, follow the
+manual steps in this section instead.
 
 ### Create virtual environment
 Create a Python virtual environment in the PiClock directory for 
@@ -135,82 +133,11 @@ python3 -m pip install --upgrade pip
 python3 -m pip install -r requirements.txt
 ```
 ### Optional software packages
-#### Optional - NeoPixel LED Driver
-Get optional ws281x driver for Python if using NeoPixel LEDs
-```
-python3 -m pip install rpi_ws281x
-```
-Some versions of Raspberry Pi OS need python3-dev to be installed as well, before
-rpi-ws281x can be installed.  If the previous command fails reporting
-a missing include file, then do this:
-```
-sudo apt install python3-dev
-python3 -m pip install rpi_ws281x
-```
-
-#### Optional - DS18B20 Temperature Driver
-Get optional DS18B20 Temperature driver for Python if using indoor temperature sensors
-```
-python3 -m pip install w1thermsensor
-```
-
-#### Optional - Lirc IR Remote Driver
-Get optional Lirc driver if using IR remote
-```
-sudo apt install lirc
-```
-use nano to edit lirc options file
-```
-sudo nano /etc/lirc/lirc_options.conf
-```
-Be sure the uinput line appears as follows
-```
-uinput         = True
-```
-Be sure the driver line appears as follows
-```
-driver          = default
-```
-
 #### Optional - mpg123 Audio Streaming
 Get optional mpg123 to play NOAA weather radio streams
 ```
 sudo apt install mpg123
 ```
-
-### Optional - Editing config.txt
-
-(Only required if you will be using IR Remote control or DS18B20 temperature
- sensors)
-
-Log into your Pi, (either on the screen or via ssh)
-
-use nano to edit the boot config file
-```
-sudo nano /boot/config.txt
-```
-Be sure the lines
-```
-dtoverlay=lirc-rpi,gpio_in_pin=3,gpio_out_pin=2
-dtoverlay=w1-gpio,gpiopin=4
-```
-are in there somewhere, and occur only once.
-The default config has lirc-rpi commented out (# in front), don't forget to remove the #
-Also add the pin arguments just as shown above, if they are not already there.
-
-You're free to change the pins, but of course the hardware guide will need to
-be adjusted to match.
-
-use nano to edit the modules file
-```
-sudo nano /etc/modules
-```
-Be sure the lines
-```
-lirc_rpi gpio_in_pin=3 gpio_out_pin=2
-w1-gpio
-```
-are in there somewhere, and only occur once.
 
 ### Exit virtual environment
 To leave the virtual environment, use the following command
@@ -237,55 +164,6 @@ cd PiClock/Button
 make gpio-keys
 cd ../..
 ```
-
-### Optional - Set up Lirc IR Remote
-
-If you're using the recommended IR Key Fob,
-https://www.google.com/search?q=Mini+Universal+Infrared+IR+TV+Set+Remote+Control+Keychain
-you can copy the lircd.conf file included in the distribution as follows:
-```
-sudo cp IR/lircd.conf /etc/lirc/lircd.conf.d/
-```
-If you're using something else, you'll need to use irrecord, or load a remote file
-as found on http://lirc.org/
-
-The software expects 7 keys.   KEY_F1, KEY_F2, KEY_F3, KEY_UP, KEY_DOWN, KEY_RIGHT
-and KEY_LEFT.   Lirc takes these keys and injects them into linix as if they
-were typed from a keyboard.   PyQtPiClock.py then simply looks for normal keyboard
-events.   Therefore, of course, if you have a USB keyboard attached, those keys
-work too.  On the key fob remote, F1 is power, F2 is mute and F3 is AV/TV.
-
-You should (must) verify your IR codes.   I've included a program called IRCodes.pl
-which will verify that your lircd.conf is set up correctly.
-If you've rebooted after installing lircd.conf, you'll have to stop lirc first:
-```
-sudo service lirc stop
-```
-Then use the IRCodes.pl program as follows:
-```
-perl IR/IRCodes.pl
-```
-Yes, I reverted to perl... I may redo it in Python one day.
-
-If you're using the recommended key fob remote, they come randomly programmed from
-the supplier.   To program them you press and hold the mute button (the middle one)
-while watching the screen scroll through codes.
-When the screen shows
-```
-************ KEY_F2
-```
-STOP! then try the other keys, be sure they all report KEY_UP, KEY_DOWN correctly.
-If not press and hold the mute button again, waiting for the asterisks and KEY_F2,
-then STOP again, try the other keys.   Repeat the process until you have all the
-keys working.
-
-Ctrl-C to abort perl.
-
-then reboot
-```
-sudo reboot
-```
-
 
 ### Configure the PiClock API keys
 
@@ -350,7 +228,7 @@ You need to then activate the key.
 Now that you have your API keys, copy the ApiKeys-example.py as ApiKeys.py and edit it...
 
 ```
-cd PiClock/Clock
+cd PiClock/conf
 cp ApiKeys-example.py ApiKeys.py
 nano ApiKeys.py
 ```
@@ -373,7 +251,7 @@ Here's where you tell PiClock where your weather should come from, and the
 radar map centers and markers.  Copy the Config-Example.py as Config.py and edit it...
 
 ```
-cd PiClock/Clock
+cd PiClock/conf
 cp Config-Example.py Config.py
 nano Config.py
 ```
@@ -649,8 +527,8 @@ shadow alone tends to bury the picture. Two settings control this:
 `'classic'` is the original arrangement: a large clock centered on the screen,
 the day/date across the top, sun rise/set along the bottom.
 
-`'photo'` rearranges page 1 to keep the background image visible. The inside
-temperature, time, day/date and sun rise/set stack along the bottom, sized so
+`'photo'` rearranges page 1 to keep the background image visible. The time,
+day/date and sun rise/set stack along the bottom, sized so
 the time leads that group, and the severe weather alert moves up near the top.
 The middle of the screen is left for the image.
 
@@ -719,7 +597,7 @@ file (Config.py)
 ### Logs
 The -s option causes no log files to be created, but
 instead logs to your terminal screen.  If -s is omitted, logs are
-created in PiClock/Clock as PyQtPiClock.[1-7].log, which can also help
+created in PiClock/logs as PyQtPiClock.[1-7].log, which can also help
 you find issues.  -s is normally omitted when started from the desktop icon
 or from crontab.  Logs are then created for debugging auto starts.
 
@@ -740,15 +618,6 @@ didn't need to call the API again.
   * F7 will show the next slideshow image
   * F8 will pause/resume the slideshow
   * F9 will toggle the foreground (clock/weather/radar) on and off, showing just the slideshow
-
-If you're using the temperature feature AND you have multiple temperature sensors,
-you'll see the clock display: 000000283872:74.6 00000023489:65.4 or something similar.
-Note the numbers exactly.   Use F4 to stop the clock,
-then
-```
-nano Temperature/TempNames.py
-```
-Give each number a name, like is shown in the examples in that file
 
 ### Setting the clock to auto start
 At this point the clock will only start when you manually start it, as
@@ -803,34 +672,9 @@ startup.sh has a few options:
 * -d X or --delay X&emsp;&emsp;&emsp;&emsp;&emsp;&emsp;&emsp;Delay X seconds before starting the clock
 * -m X or --message-delay X&emsp;&emsp;Delay X seconds while displaying a message on the desktop
 
-Startup also looks at the various optional PiClock items (Buttons, Temperature, NeoPixel, etc.)
-and only starts those things that are configured to run.   It also checks if they are already
-running, and refrains from starting them again if they are.
-
-### Switching skins at certain times of the day
-This is optional, but if its just too bright at night, a switcher script will kill and restart
-PyQtPiClock with an alternate config.
-
-First you need to set up an alternate config.   Config.py is the normal name, so perhaps Config-Night.py
-might be appropriate.  For a dimmer display use Config-Example-Bedside.py as a guide.
-
-First you must make switcher.sh executable (git removes the x flags)
-```
-cd PiClock
-chmod +x switcher.sh
-```
-Now tell your friend cron to run the switcher script (switcher.sh) on day/night cycles.
-Run the cron editor: (should *not* be root)
-```
-crontab -e
-```
-Add lines similar to this:
-```
-0 8 * * * bash /home/pi/PiClock/switcher.sh Config
-0 21 * * * bash /home/pi/PiClock/switcher.sh Config-Night
-```
-The 8 there means 8am, to switch to the normal config, and the 21 means switch to Config-Night at 9pm.
-More info on crontab can be found here: https://en.wikipedia.org/wiki/Cron
+Startup also looks for the optional GPIO buttons and only starts the gpio-keys
+driver if it has been built. It also checks whether it is already running, and
+refrains from starting it again if it is.
 
 ### Setting the Pi to auto reboot every day
 This is optional but some may want their PiClock to reboot every day.  I do this with mine,

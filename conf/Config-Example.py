@@ -141,10 +141,10 @@ digitalformat2 = '{0:%-I:%M:%S %p}'  # Format of the digital time on second scre
 # Layout and text legibility
 # 'classic' - the original arrangement: a large clock centered on the screen,
 #             day/date across the top, sun rise/set along the bottom
-# 'photo'   - inside temperature, clock, day/date and sun rise/set stacked
-#             along the bottom with the time leading them, and the severe
-#             weather alert up near the top. Leaves far more of the background
-#             image visible.
+# 'photo'   - clock, day/date and sun rise/set stacked along the bottom
+#             with the time leading them, and the severe weather alert up
+#             near the top. Leaves far more of the background image
+#             visible.
 layout = 'photo'
 # Gradient panels drawn behind the text (left, right, top and bottom edges) so
 # light text stays readable over a bright image without hiding it behind a
@@ -178,7 +178,6 @@ pressure_mbar = 0 # Override pressure units in millibars, mbar, instead of inche
 fontattr = 'font-weight: bold;'
 
 # These are to dim the radar images, if needed.
-# see and try Config-Example-Bedside.py
 dimcolor = QColor('#00000')
 dimcolor.setAlpha(0)
 

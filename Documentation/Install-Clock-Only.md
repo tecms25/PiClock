@@ -41,8 +41,8 @@ by clicking the **< > Code** button above the list of files at [PiClock](../),
 select **Download ZIP**, then unzip it onto your system.
 
 ### Quick install (recommended)
-For a standard install (no GPIO buttons, IR remote, temperature sensors, or
-NeoPixel LEDs), an installer script will create the virtual environment,
+For a standard install (no GPIO buttons), an installer script will create the
+virtual environment,
 install the required Python packages, install the bundled Open Sans fonts
 from the `fonts` folder for the current user, set up `conf/ApiKeys.py` and
 `conf/Config.py` from the examples, and interactively prompt you for your
@@ -131,7 +131,7 @@ You need to then activate the key.
 Now that you have your API keys, copy the ApiKeys-example.py as ApiKeys.py and edit it...
 
 ```
-cd PiClock/Clock
+cd PiClock/conf
 cp ApiKeys-example.py ApiKeys.py
 nano ApiKeys.py
 ```
@@ -154,7 +154,7 @@ Here's where you tell PiClock where your weather should come from, and the
 radar map centers and markers.  Copy the Config-Example.py as Config.py and edit it...
 
 ```
-cd PiClock/Clock
+cd PiClock/conf
 cp Config-Example.py Config.py  (copy on windows)
 [use your favorite editor] Config.py
 ```
@@ -423,8 +423,8 @@ shadow alone tends to bury the picture. Two settings control this:
 `'classic'` is the original arrangement: a large clock centered on the screen,
 the day/date across the top, sun rise/set along the bottom.
 
-`'photo'` rearranges page 1 to keep the background image visible. The inside
-temperature, time, day/date and sun rise/set stack along the bottom, sized so
+`'photo'` rearranges page 1 to keep the background image visible. The time,
+day/date and sun rise/set stack along the bottom, sized so
 the time leads that group, and the severe weather alert moves up near the top.
 The middle of the screen is left for the image.
 

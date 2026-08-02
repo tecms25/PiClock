@@ -4,9 +4,8 @@ setlocal enabledelayedexpansion
 :: Installer for PiClock (Windows) - standard software-only setup.
 :: Sets up the virtual environment, Python packages, and config files needed
 :: to run the clock, weather, radar, slideshow, and NOAA alert features.
-:: Does NOT set up optional hardware add-ons (GPIO buttons, IR remote,
-:: temperature sensors, NeoPixel LEDs) - those are Raspberry Pi-only add-ons
-:: and are not applicable on Windows.
+:: Does NOT set up the optional GPIO buttons - those are a Raspberry Pi-only
+:: add-on and are not applicable on Windows.
 
 cd /d "%~dp0"
 

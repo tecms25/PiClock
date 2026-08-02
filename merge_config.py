@@ -27,6 +27,7 @@ REPO = os.path.dirname(os.path.abspath(__file__))
 RETIRED = (
     'LToday',       # 'Today: ' - dropped with the pre-Tomorrow.io forecast block
     'LPrecip1hr',   # ' Precip 1hr: ' - same
+    'LInsideTemp',  # 'Inside Temp ' - dropped with the DS18B20 temperature server
 )
 
 # (example file, the live file it seeds)

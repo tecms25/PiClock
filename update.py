@@ -90,14 +90,6 @@ if os.path.isfile(apikeysFileName):
     else:
         print('No changes made to ' + apikeysFileName)
 
-    try:
-        from rpi_ws281x import *  # NOQA
-    except ModuleNotFoundError:
-        print('\nERROR: rpi_ws281x not found')
-        print('NeoAmbi.py now uses rpi-ws281x/rpi-ws281x-python')
-        print('Please install it as follows:')
-        print('python3 -m pip install rpi_ws281x')
-
 # A newer PiClock usually brings new Config.py settings with it. Offer to add
 # the ones this install is missing, rather than leaving them to be found the
 # hard way. Nothing is written without a yes, and a backup is taken first.

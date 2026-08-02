@@ -690,39 +690,6 @@ def cursor_idle_tick():
         cursor_hidden = True
 
 
-def tempfinished():
-    global tempreply, temp
-    tempreply.deleteLater()
-    if tempreply.error() != QNetworkReply.NetworkError.NoError:
-        return
-    tempstr = str(tempreply.readAll(), 'utf-8')
-    try:
-        tempdata = json.loads(tempstr)
-    except ValueError:  # includes json.decoder.JSONDecodeError
-        print('WARNING:', traceback.format_exc())
-        print('WARNING: Response from localhost: ' + tempstr)
-        print('WARNING: Moving on...')
-        return  # ignore and try again on the next refresh
-
-    if tempdata['temp'] == '':
-        return
-    if Config.metric:
-        s = Locale.LInsideTemp + '%.1f' % tempf2tempc(float(tempdata['temp'])) + Locale.LDegC
-        if tempdata['temps']:
-            if len(tempdata['temps']) > 1:
-                s = ''
-                for tk in tempdata['temps']:
-                    s += ' ' + tk + ': ' + '%.1f' % tempf2tempc(float(tempdata['temps'][tk])) + Locale.LDegC
-    else:
-        s = Locale.LInsideTemp + tempdata['temp'] + Locale.LDegF
-        if tempdata['temps']:
-            if len(tempdata['temps']) > 1:
-                s = ''
-                for tk in tempdata['temps']:
-                    s += ' ' + tk + ': ' + tempdata['temps'][tk] + Locale.LDegF
-    temp.setText(s)
-
-
 def tempf2tempc(f):
     return (f - 32) / 1.8  # temperature degrees Fahrenheit to degrees Celsius
 
@@ -784,17 +751,6 @@ def compass_index(degrees):
 
 def bearing(f):
     return Locale.Lcompass[compass_index(f)]
-
-
-def gettemp():
-    global tempreply
-    host = 'localhost'
-    if platform.uname()[1] == 'KW81':
-        host = 'piclock.local'  # this is here just for testing
-    r = QUrl('http://' + host + ':48213/temp')
-    r = QNetworkRequest(r)
-    tempreply = manager.get(r)
-    tempreply.finished.connect(tempfinished)
 
 
 tm_code_icons = {
@@ -1657,7 +1613,7 @@ def update_bubble_priority():
 
 
 def qtstart():
-    global ctimer, wxtimer, temptimer, metadatatimer, cursortimer, alerttimer
+    global ctimer, wxtimer, metadatatimer, cursortimer, alerttimer
     global apicachecleanuptimer, flighttimer, blueirisListener
     global pressuretrendtimer
     global objradar1
@@ -1695,7 +1651,6 @@ def qtstart():
         daytime = False
 
     getallwx()
-    gettemp()
 
     # Start all radar objects
     radar_refresh_interval = Config.radar_refresh * 60
@@ -1726,11 +1681,6 @@ def qtstart():
     wxtimer = QtCore.QTimer()
     wxtimer.timeout.connect(getallwx)
     wxtimer.start(int(1000 * Config.weather_refresh * 60 + random.uniform(1000, 10000)))
-
-    temptimer = QtCore.QTimer()
-    temptimer.timeout.connect(gettemp)
-    temptimer.start(int(1000 * 10 * 60 + random.uniform(1000, 10000)))
-
 
     # Fetch RainViewer metadata once at regular intervals (every 10 minutes)
     metadatatimer = QtCore.QTimer()
@@ -4202,7 +4152,7 @@ def realquit():
 
 def myquit(signum, frame):
     global objradar1, objradar2, objradar3, objradar4
-    global ctimer, wxtimer, temptimer, cursortimer, alerttimer, flighttimer
+    global ctimer, wxtimer, cursortimer, alerttimer, flighttimer
 
     # Each step is best-effort. myquit() runs from a key press, and an
     # exception in a Qt slot aborts the process outright - which would skip
@@ -4219,7 +4169,7 @@ def myquit(signum, frame):
                         ('radar3', objradar3), ('radar4', objradar4)):
         attempt(name, radar.stop)
     for name, timer in (('ctimer', ctimer), ('wxtimer', wxtimer),
-                        ('temptimer', temptimer), ('cursortimer', cursortimer),
+                        ('cursortimer', cursortimer),
                         ('alerttimer', alerttimer)):
         attempt(name, timer.stop)
     if Config.flights_enabled and flighttimer is not None:
@@ -4304,8 +4254,8 @@ configname = 'Config'
 if len(sys.argv) > 1:
     configname = sys.argv[1]
 
-# An alternate config may be given as a bare name (conf/Config-Bedside) or as
-# a path to somewhere else entirely.
+# An alternate config may be given as a bare name, loaded from conf/, or as a
+# path to somewhere else entirely.
 if os.path.isfile(os.path.join(CONF_DIR, configname + '.py')):
     Config = __import__(configname)
 elif os.path.isfile(configname + '.py'):
@@ -4887,10 +4837,10 @@ bottom.setGeometry(0, int(height - 50 * yscale), width, int(50 * yscale))
 
 add_text_shadow(bottom)
 
-# Severe weather warning bubble: below the clock, clear of the inside
-# temperature and the sunrise/set footer stacked underneath it. The bubble is
-# raised above its siblings so the whole bar stays clickable, which means it
-# would paint over anything it overlapped.
+# Severe weather warning bubble: below the clock, clear of the sunrise/set
+# footer stacked underneath it. The bubble is raised above its siblings so the
+# whole bar stays clickable, which means it would paint over anything it
+# overlapped.
 # The detail panel is a direct child of w (like brightness_overlay) so it sits
 # on top of both frame1/frame2 and is reachable from either page.
 alertDetailPanel = AlertDetailPanel(w, width, height)
@@ -4909,25 +4859,6 @@ alertrect = QtCore.QRect(
 alertBubble = AlertBubble(foreGround, alertrect, alertDetailPanel)
 # Same slot as the alert bar; update_bubble_priority() keeps them from clashing.
 flightBubble = FlightBubble(foreGround, alertrect)
-
-
-temp = QtWidgets.QLabel(foreGround)
-temp.setObjectName('temp')
-temp.setStyleSheet('#temp { font-family:"Open Sans"; color: ' +
-                   Config.textcolor +
-                   '; background-color: transparent; font-size: ' +
-                   str(int(30 * xscale * Config.fontmult)) +
-                   'px; ' +
-                   Config.fontattr +
-                   '}')
-temp.setAlignment(Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignTop)
-temp.setGeometry(0, int(height - 100 * yscale), width, int(50 * yscale))
-# Full-width and usually empty (it only fills in when the optional temperature
-# server is running), so without this it silently swallows every click along
-# the bottom of the screen.
-temp.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
-
-add_text_shadow(temp)
 
 
 tzlatlng = pytz.utc
@@ -5025,11 +4956,10 @@ def add_scrims():
 
 # Band heights for the 'photo' layout, in the same 900-unit design space the
 # rest of the layout uses (multiplied by yscale at build time). The bottom
-# block stacks upward from the footer: sun/moon, day/date, clock, inside temp.
+# block stacks upward from the footer: sun/moon, day/date, clock.
 PHOTO_FOOTER_H = 44
 PHOTO_DATE_H = 46
 PHOTO_CLOCK_H = 100
-PHOTO_TEMP_H = 40
 PHOTO_GAP = 4
 # Both bubbles sit near the very top edge, where the left weather block and
 # right forecast column leave a clear run, so they take as little of the
@@ -5042,23 +4972,15 @@ def apply_photo_layout():
     """Rearrange page 1 to keep the background image visible.
 
     The time, day/date and sun/moon line stack along the bottom with the clock
-    as the largest of the three, the inside temperature sits above them, and
-    the severe weather alert moves up out of the way. The classic layout
-    centres a much larger clock instead.
+    as the largest of the three, and the severe weather alert moves up out of
+    the way. The classic layout centres a much larger clock instead.
     """
     footer_top = 900 - PHOTO_FOOTER_H
     date_top = footer_top - PHOTO_GAP - PHOTO_DATE_H
     clock_top = date_top - PHOTO_GAP - PHOTO_CLOCK_H
-    temp_top = clock_top - PHOTO_GAP - PHOTO_TEMP_H
 
     clockface.setGeometry(0, int(clock_top * yscale), width, int(PHOTO_CLOCK_H * yscale))
     clockface.setAlignment(Qt.AlignmentFlag.AlignCenter)
-
-    temp.setStyleSheet(temp.styleSheet().replace(
-        'font-size: ' + str(int(30 * xscale * Config.fontmult)) + 'px',
-        'font-size: ' + str(int(Config.footersize * xscale * Config.fontmult)) + 'px'))
-    temp.setGeometry(0, int(temp_top * yscale), width, int(PHOTO_TEMP_H * yscale))
-    temp.setAlignment(Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignVCenter)
 
     # Centred vertically: the <sup> in the date makes the line taller than the
     # font size suggests, and AlignTop clips its descenders.

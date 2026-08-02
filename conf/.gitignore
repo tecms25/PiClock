@@ -1,10 +1,9 @@
 /ApiKeys.py
 /Config.py
-/Config-Chris.py
-/Config-Jean.py
-/Config-Kelly.py
-/Config-jcwho.py
-/Config-Bedside.py
-/Config-7in-night.py
-/Config-7in-day.py
+
+# Alternate configs. PyQtPiClock.py takes a config name as its argument; any
+# Config-*.py you make is a personal setup that stays out of git.
+/Config-*.py
+!/Config-Example.py
+
 *.bak-*

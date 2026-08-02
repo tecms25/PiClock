@@ -16,13 +16,11 @@ Google Maps (https://developers.google.com/maps).
 this work.** They offer free subscription plans for low-usage projects such as this application.
 
 The PiClock can be customized with several supported additional things:
-  * RGB LED strips (NeoPixel) to create an ambilight effect
   * gpio buttons for changing the view
-  * IR Remote Control for changing the view
   * Streaming the NOAA weather radio stream for your area
 
-The power usage I've measured is about 35watts with a 19" HDMI Monitor, 27 LEDs and the Pi.
-The LEDs contributed 3 or so watts, and I think the Pi is about 2-3 Watts normally.
+The power usage I've measured is about 32watts with a 19" HDMI Monitor and the Pi.
+The Pi is about 2-3 Watts normally.
 
 This is the basic PiClock, with some options added.
 ![PiClock Picture](../Pictures/20150307_222711.jpg)
@@ -55,13 +53,7 @@ So what do you need to build a PiClock?
 
 Optional things
 
-  * One or more DS18B20s for showing the indoor temperature: https://www.google.com/search?q=ds18b20
-  * A string of WS2818 based RGB LEDs for the AmbiLight effect.  At 40ma per LED, and 30 or so
-    LEDs you're quickly up to needing an extra 1.2A from the power supply.  Size it appropriately.
-    One option is: https://learn.adafruit.com/adafruit-neopixel-uberguide/overview
-  * A TSOP4838 IR Receiver to flip the page display of the PiClock: https://www.google.com/search?q=tsop4838
-  * An IR Remote control. I use this little guy: https://www.google.com/search?q=Mini+Universal+Infrared+IR+TV+Set+Remote+Control+Keychain
-  * Button or buttons connected to some GPIO pins (and a ground pin) for flipping pages like the IR remote
+  * Button or buttons connected to some GPIO pins (and a ground pin) for flipping pages
 
 ## What else?
 
