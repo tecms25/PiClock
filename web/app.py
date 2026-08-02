@@ -104,6 +104,9 @@ def create_app(settings=None, secrets_path=SECRETS, audit_db=AUDIT_DB):
 
     app.jinja_env.globals['csrf_token'] = csrf_token
 
+    def wants_json():
+        return 'application/json' in (request.headers.get('Accept') or '')
+
     @app.before_request
     def gate():
         # First gate, ahead of everything including the login form.
@@ -122,17 +125,23 @@ def create_app(settings=None, secrets_path=SECRETS, audit_db=AUDIT_DB):
             if not (held and secrets_module.compare_digest(sent, held)):
                 app.logger.warning('CSRF check failed from %s on %s',
                                    caller(), request.path)
-                return ('This form expired or did not come from the panel. '
-                        'Reload the page and try again.\n',
-                        400, {'Content-Type': 'text/plain'})
+                stale = ('This page expired or did not come from the panel. '
+                         'Reload it and try again.')
+                if wants_json():
+                    return jsonify({'ok': False, 'message': stale}), 400
+                return (stale + '\n', 400, {'Content-Type': 'text/plain'})
 
         # Third gate. The login page and the stylesheet are the only things
         # served without a session.
         if request.endpoint in ('login', 'static'):
             return None
         if not session.get('authenticated'):
-            if request.path.startswith('/api/'):
-                return jsonify({'error': 'not authenticated'}), 401
+            # A redirect to the login form is useless to a fetch() - it would
+            # read as an unexpected reply rather than "you were signed out".
+            if request.path.startswith('/api/') or wants_json():
+                return jsonify({'ok': False,
+                                'message': 'Your session has expired. Reload '
+                                           'the page and sign in again.'}), 401
             return redirect(url_for('login', next=request.path))
         return None
 
@@ -213,6 +222,21 @@ def create_app(settings=None, secrets_path=SECRETS, audit_db=AUDIT_DB):
                                     app.config['COMMAND_TOKEN'])
         audit.record(audit_db, caller(), name, 'ok' if ok else 'failed', message)
         app.logger.info('%s sent command %s -> %s', caller(), name, message)
+        return outcome(ok, message)
+
+    def outcome(ok, message):
+        """Answer a control request.
+
+        JSON when the page asked for it, so the browser can update in place
+        rather than reloading and losing your scroll position; a redirect
+        otherwise, which is what a plain form post with no JavaScript gets.
+        The state and the log come back with it, so one round trip refreshes
+        everything the page shows.
+        """
+        if 'application/json' in (request.headers.get('Accept') or ''):
+            return jsonify({'ok': ok, 'message': message,
+                            'service': status.service_status(),
+                            'events': audit.recent(audit_db)})
         flash(message, 'ok' if ok else 'error')
         return redirect(url_for('control_page'))
 
@@ -229,8 +253,7 @@ def create_app(settings=None, secrets_path=SECRETS, audit_db=AUDIT_DB):
                             'ok' if ok else 'failed', message):
             message += ' (this could not be written to the audit log)'
         app.logger.info('%s requested %s -> %s', caller(), name, message)
-        flash(message, 'ok' if ok else 'error')
-        return redirect(url_for('control_page'))
+        return outcome(ok, message)
 
     @app.route('/api/status')
     def api_status():

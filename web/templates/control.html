@@ -2,12 +2,14 @@
 {% block title %}Control - PiClock{% endblock %}
 {% block content %}
 
+<p id="panel-flash" hidden></p>
+
 <div class="card">
   <h2>Clock service</h2>
   {% if service.available %}
-  <p class="state {{ 'good' if service.active == 'active' else 'bad' }}">{{ service.active }}</p>
+  <p id="service-state" class="state {{ 'good' if service.active == 'active' else 'bad' }}">{{ service.active }}</p>
   {% else %}
-  <p class="state unknown">unknown</p>
+  <p id="service-state" class="state unknown">unknown</p>
   <p class="muted">{{ service.note }}</p>
   {% endif %}
 </div>
@@ -20,8 +22,8 @@
   {% endif %}
   <div class="actions">
     {% for a in actions %}
-    <form method="post" action="{{ url_for('action') }}"
-          {% if a.confirm %}onsubmit="return confirm('{{ a.describe }}\n\nGo ahead?');"{% endif %}>
+    <form method="post" action="{{ url_for('action') }}" data-live
+          {% if a.confirm %}data-confirm="{{ a.describe }} Go ahead?"{% endif %}>
       <input type="hidden" name="csrf" value="{{ csrf_token() }}">
       <input type="hidden" name="action" value="{{ a.name }}">
       <button type="submit" class="{{ 'danger' if a.danger }}"
@@ -40,7 +42,7 @@
   <h3>{{ group }}</h3>
   <div class="commands">
     {% for c in items %}
-    <form method="post" action="{{ url_for('command') }}">
+    <form method="post" action="{{ url_for('command') }}" data-live>
       <input type="hidden" name="csrf" value="{{ csrf_token() }}">
       <input type="hidden" name="command" value="{{ c.name }}">
       <button type="submit" class="secondary" title="{{ c.describe }}">
@@ -53,13 +55,12 @@
 </div>
 
 <div class="card">
-  <h2>Activity <span class="count">{{ events|length }}</span></h2>
-  {% if events %}
+  <h2>Activity <span class="count" id="activity-count">{{ events|length }}</span></h2>
   <table>
     <thead>
       <tr><th>When</th><th>From</th><th>Action</th><th>Outcome</th><th>Detail</th></tr>
     </thead>
-    <tbody>
+    <tbody id="activity-rows">
     {% for e in events %}
       <tr>
         <td>{{ e.at }}</td>
@@ -71,9 +72,7 @@
     {% endfor %}
     </tbody>
   </table>
-  {% else %}
-  <p class="muted">Nothing recorded yet.</p>
-  {% endif %}
+  {% if not events %}<p class="muted">Nothing recorded yet.</p>{% endif %}
 </div>
 
 {% endblock %}
