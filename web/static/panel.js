@@ -86,16 +86,49 @@
     });
   }
 
-  /* Settings filter: hide rows whose name or help does not match. */
+  /* Settings filter: hide rows that do not match, and open any group holding
+   * one - otherwise a match inside a collapsed group looks like no match at
+   * all. Groups the user opened by hand before typing are remembered, so
+   * clearing the box puts the page back as it was rather than collapsing
+   * everything. */
   var filter = document.getElementById('settings-filter');
   if (filter) {
+    var wasOpen = null;
+
     filter.addEventListener('input', function () {
       var needle = filter.value.trim().toLowerCase();
-      Array.prototype.forEach.call(
-        document.querySelectorAll('tr.setting'), function (row) {
-          row.hidden = needle !== '' &&
-            row.textContent.toLowerCase().indexOf(needle) === -1;
+      var groups = document.querySelectorAll('details.group');
+
+      if (needle === '') {
+        Array.prototype.forEach.call(groups, function (group, i) {
+          // hidden must be cleared whether or not a previous state was saved,
+          // or a group the filter hid stays invisible after clearing the box.
+          group.hidden = false;
+          if (wasOpen) { group.open = wasOpen[i]; }
         });
+        wasOpen = null;
+        Array.prototype.forEach.call(
+          document.querySelectorAll('tr.setting'), function (row) {
+            row.hidden = false;
+          });
+        return;
+      }
+
+      if (!wasOpen) {
+        wasOpen = Array.prototype.map.call(groups, function (g) { return g.open; });
+      }
+
+      Array.prototype.forEach.call(groups, function (group) {
+        var hits = 0;
+        Array.prototype.forEach.call(
+          group.querySelectorAll('tr.setting'), function (row) {
+            var match = row.textContent.toLowerCase().indexOf(needle) !== -1;
+            row.hidden = !match;
+            if (match) { hits += 1; }
+          });
+        group.open = hits > 0;
+        group.hidden = hits === 0;
+      });
     });
   }
 

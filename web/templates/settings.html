@@ -14,7 +14,9 @@
 
 <form method="post" action="{{ url_for('settings_save') }}">
   <input type="hidden" name="csrf" value="{{ csrf_token() }}">
-  <div class="card">
+  {% for group, rows in groups %}
+  <details class="card group" {% if loop.first %}open{% endif %}>
+    <summary>{{ group }} <span class="count">{{ rows|length }}</span></summary>
     <table class="settings">
       <tbody>
       {% for row in rows %}
@@ -58,7 +60,8 @@
       {% endfor %}
       </tbody>
     </table>
-  </div>
+  </details>
+  {% endfor %}
   <div class="card">
     <button type="submit">Save changes</button>
     <span class="muted">A backup is written first. Secrets left blank stay as

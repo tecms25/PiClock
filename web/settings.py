@@ -41,6 +41,46 @@ LOCKED = ('web_enabled', 'web_port', 'web_bind', 'web_command_port')
 
 BACKUP_PREFIX = 'Config.py.bak-'
 
+# Which panel each setting is filed under. Config.py has only a couple of
+# section banners, so the grouping is derived from the names instead. Matched
+# in order on a substring, first match wins - so 'blueiris_password' is filed
+# under the cameras rather than under anything matching 'password'.
+GROUPS = (
+    ('Blue Iris cameras', ('blueiris',)),
+    # Before the web panel, so web_slideshow_playlist files with the slideshow
+    # it configures rather than with the panel it is named after.
+    ('Slideshow', ('slide', 'useslideshow', 'icloud')),
+    ('Web control panel', ('web_',)),
+    ('Radar and maps', ('radar', 'map_', 'mapbox', 'google', 'usemapbox', 'tile')),
+    ('Aircraft', ('flight',)),
+    ('Alerts and radio', ('noaa', 'alert')),
+    ('Screen and brightness', ('brightness', 'day_', 'night_', 'prevent_screen',
+                              'cursor', 'sleep')),
+    ('Clock face and layout', ('digital', 'font', 'layout', 'scrim', 'textcolor',
+                               'footer', 'date', 'clock', 'size', 'color',
+                               'background', 'icons')),
+    ('Weather', ('metric', 'weather', 'temp', 'wind', 'pressure', 'metar',
+                 'coordinates', 'location', 'language', 'units')),
+)
+DEFAULT_GROUP = 'Other'
+GROUP_ORDER = tuple(name for name, _ in GROUPS) + (DEFAULT_GROUP,)
+
+
+def group_of(name):
+    lowered = name.lower()
+    for group, keywords in GROUPS:
+        if any(keyword in lowered for keyword in keywords):
+            return group
+    return DEFAULT_GROUP
+
+
+def grouped(rows):
+    """[(group, [rows])] in a fixed order, skipping groups with nothing in."""
+    buckets = {}
+    for row in rows:
+        buckets.setdefault(row['group'], []).append(row)
+    return [(name, buckets[name]) for name in GROUP_ORDER if name in buckets]
+
 
 def looks_secret(name):
     lowered = name.lower()
@@ -149,6 +189,7 @@ def read(path=None):
                         (value if isinstance(value, str) else repr(value))
                         if name in spans else '(not a plain value)'),
             'help': note,
+            'group': group_of(name),
             'order': start,
         })
     rows.sort(key=lambda row: row['order'])

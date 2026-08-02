@@ -198,7 +198,22 @@ kbd {
 }
 
 /* Settings form: label and help on the left, the field on the right. Stacks
-   below the width where two columns stop being readable. */
+   below the width where two columns stop being readable.
+
+   display:table and table-layout:fixed override the generic table rule above,
+   which sets display:block so the status page's wide tables can scroll. On a
+   form that was the cause of the layout jumping about: display:block discards
+   the table layout algorithm, so column widths get recomputed from each row's
+   content, and a select or input changing width reflowed the whole page.
+   Fixed layout sizes the columns once, from the header, and content cannot
+   move them afterwards. */
+table.settings {
+  display: table;
+  table-layout: fixed;
+  width: 100%;
+  overflow-x: visible;
+}
+
 table.settings th { width: 42%; padding-right: 1.25rem; }
 table.settings th label { color: var(--text); font-weight: 600; margin: 0; }
 table.settings .help { display: block; margin-top: .15rem; line-height: 1.35; }
@@ -236,6 +251,42 @@ table.settings textarea { resize: vertical; }
   table.settings th, table.settings td { display: block; width: auto; padding-right: 0; }
   table.settings th { border-bottom: 0; padding-bottom: .2rem; }
 }
+
+/* Collapsible groups, so the page opens as a short list of headings instead of
+   sixty-odd rows. <details> needs no JavaScript; the filter opens whichever
+   ones contain a match. */
+details.group { padding: 0; }
+
+details.group > summary {
+  padding: .85rem 1.15rem;
+  cursor: pointer;
+  font-size: .8rem;
+  text-transform: uppercase;
+  letter-spacing: .06em;
+  color: var(--muted);
+  font-weight: 600;
+  list-style: none;
+  display: flex;
+  align-items: center;
+  gap: .6rem;
+}
+
+details.group > summary::-webkit-details-marker { display: none; }
+
+/* A disclosure triangle drawn rather than relying on the default marker,
+   which is inconsistent across browsers and cannot be positioned. */
+details.group > summary::before {
+  content: '';
+  border: solid currentColor;
+  border-width: 0 1.5px 1.5px 0;
+  padding: 2.5px;
+  transform: rotate(-45deg);
+  transition: transform .12s ease;
+}
+
+details.group[open] > summary::before { transform: rotate(45deg); }
+details.group > summary:hover { color: var(--text); }
+details.group > table { margin: 0 1.15rem 1rem; width: calc(100% - 2.3rem); }
 
 .flash {
   padding: .7rem .9rem;

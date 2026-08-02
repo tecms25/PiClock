@@ -259,7 +259,8 @@ def create_app(settings=None, secrets_path=SECRETS, audit_db=AUDIT_DB):
     @app.route('/settings')
     def settings_page():
         return render_template('settings.html',
-                               rows=config_settings.read(),
+                               groups=config_settings.grouped(
+                                   config_settings.read()),
                                backups=config_settings.backups())
 
     @app.route('/settings/save', methods=['POST'])
