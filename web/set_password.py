@@ -52,6 +52,11 @@ def main():
     # opened with the old one - if you are changing it because someone else
     # learned it, leaving their browser signed in defeats the point.
     data['session_key'] = _secrets.token_hex(32)
+    # The secret the clock's live-command channel checks. Created here so that
+    # setting a password is the only setup step - neither side needs it typed
+    # in anywhere.
+    new_channel = not data.get('command_token')
+    data.setdefault('command_token', _secrets.token_urlsafe(32))
     security.write_secrets(SECRETS, data)
 
     print('\nPassword set.')
@@ -59,6 +64,10 @@ def main():
         print('Every signed-in browser has been signed out, including yours.')
     print('Restart the panel for it to take effect:')
     print('    systemctl --user restart piclock-web')
+    if new_channel:
+        print('\nA command token was created for the live commands on the')
+        print('Control page. Restart the clock so it picks that up:')
+        print('    systemctl --user restart piclock')
     return 0
 
 

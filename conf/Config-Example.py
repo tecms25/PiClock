@@ -297,3 +297,7 @@ web_port = 8443
 # Use '127.0.0.1' to allow only a browser running on the Pi itself.
 web_bind = '0.0.0.0'
 web_session_hours = 12  # how long a sign-in lasts
+# Port the clock listens on for the panel's live commands. Bound to
+# 127.0.0.1 only, so it is never reachable from the network - the panel runs
+# on the same machine and is the only thing that talks to it.
+web_command_port = 8128

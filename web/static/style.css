@@ -175,6 +175,28 @@ nav a.here { background: var(--bg); color: var(--text); font-weight: 600; }
 
 .actions button { min-width: 6.5rem; }
 
+h3 {
+  font-size: .78rem;
+  text-transform: uppercase;
+  letter-spacing: .05em;
+  color: var(--muted);
+  margin: 1rem 0 .5rem;
+  font-weight: 600;
+}
+
+/* Wraps rather than scrolls, so a phone gets several short rows. */
+.commands { display: flex; flex-wrap: wrap; gap: .5rem; }
+.commands form { margin: 0; }
+.commands button { display: inline-flex; align-items: center; gap: .5rem; }
+
+kbd {
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  padding: 0 .35em;
+  font: 11px/1.6 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  opacity: .75;
+}
+
 .flash {
   padding: .7rem .9rem;
   border-radius: 8px;

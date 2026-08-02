@@ -3,6 +3,7 @@
 import atexit
 import datetime
 import hashlib
+import hmac
 import json
 import locale
 import math
@@ -1614,7 +1615,7 @@ def update_bubble_priority():
 
 def qtstart():
     global ctimer, wxtimer, metadatatimer, cursortimer, alerttimer
-    global apicachecleanuptimer, flighttimer, blueirisListener
+    global apicachecleanuptimer, flighttimer, blueirisListener, commandListener
     global pressuretrendtimer
     global objradar1
     global objradar2
@@ -1715,6 +1716,18 @@ def qtstart():
         blueirisListener = BlueIrisListener()
         blueirisListener.triggered.connect(blueiris_alert)
         blueirisListener.listen(getattr(Config, 'blueiris_listen_port', 8127))
+
+    # Live commands from the web control panel, if it has been set up. No
+    # token means no channel: the panel writes one into conf/web_secret.json
+    # when its password is set, so this stays shut until that has happened.
+    if getattr(Config, 'web_enabled', 0):
+        token = panel_command_token()
+        if token:
+            commandListener = CommandListener(token)
+            commandListener.listen(getattr(Config, 'web_command_port', 8128))
+        else:
+            print('INFO: web_enabled is on but conf/web_secret.json has no '
+                  'command token; run web/set_password.py to create one')
 
     if Config.useslideshow:
         objimage1.start(Config.slide_time)
@@ -2846,29 +2859,41 @@ class CameraPanel(QtWidgets.QFrame):
         anim.start()
 
 
-class BlueIrisListener(QtCore.QObject):
-    """Answers the "Web request" alert action Blue Iris fires when a camera
-    trips. Deliberately not a web server: it reads one request line, checks the
-    token, replies, and hangs up.
-    """
+class RequestLineServer(QtCore.QObject):
+    """Minimal HTTP: read the request line, act on it, reply, hang up.
 
-    triggered = QtCore.pyqtSignal(dict)
+    Deliberately not a web server. It reads one line, so a request body is
+    never parsed and there is very little here to get wrong. Shared by the Blue
+    Iris alert listener and the control panel's command channel, which need
+    exactly the same handling and differ only in what they do with the result.
+
+    Subclasses implement dispatch() and return the status to send back.
+    """
 
     MAX_REQUEST_BYTES = 4096
 
-    def __init__(self, parent=None):
+    def __init__(self, name, parent=None):
         QtCore.QObject.__init__(self, parent)
+        self._name = name
         self._server = QtNetwork.QTcpServer(self)
         self._server.newConnection.connect(self._on_connection)
         self._buffers = {}
 
-    def listen(self, port):
-        if not self._server.listen(QtNetwork.QHostAddress.SpecialAddress.Any, int(port)):
-            print('ERROR: Blue Iris listener could not bind port %s: %s'
-                  % (port, self._server.errorString()))
+    def listen(self, port, address=None):
+        if address is None:
+            address = QtNetwork.QHostAddress(
+                QtNetwork.QHostAddress.SpecialAddress.Any)
+        if not self._server.listen(address, int(port)):
+            print('ERROR: %s could not bind port %s: %s'
+                  % (self._name, port, self._server.errorString()))
             return False
-        print('INFO: Blue Iris listener ready on port %s' % port)
+        print('INFO: %s ready on %s port %s'
+              % (self._name, address.toString(), port))
         return True
+
+    def dispatch(self, path, params, peer):
+        """Return the HTTP status line to answer with."""
+        raise NotImplementedError
 
     def stop(self):
         self._server.close()
@@ -2909,21 +2934,14 @@ class BlueIrisListener(QtCore.QObject):
         if peer.startswith('::ffff:'):
             peer = peer[7:]  # IPv4 arriving on a dual-stack socket
 
-        allowed = getattr(Config, 'blueiris_allow_from', None) or []
-        if allowed and peer not in allowed:
-            print('WARNING: camera alert from %s ignored (not in blueiris_allow_from)' % peer)
-            self._respond(sock, '403 Forbidden')
-            return
-
-        params = dict(parse_qsl(urlparse(parts[1]).query, keep_blank_values=True))
-        token = getattr(Config, 'blueiris_token', '') or ''
-        if token and params.get('token', '') != token:
-            print('WARNING: camera alert from %s ignored (wrong token)' % peer)
-            self._respond(sock, '403 Forbidden')
-            return
-
-        self._respond(sock, '200 OK')
-        self.triggered.emit(params)
+        parsed = urlparse(parts[1])
+        params = dict(parse_qsl(parsed.query, keep_blank_values=True))
+        try:
+            status = self.dispatch(parsed.path, params, peer)
+        except Exception:
+            print('WARNING:', traceback.format_exc())
+            status = '500 Internal Server Error'
+        self._respond(sock, status)
 
     def _respond(self, sock, status):
         try:
@@ -2939,6 +2957,168 @@ class BlueIrisListener(QtCore.QObject):
     def _cleanup(self, sock):
         self._buffers.pop(sock, None)
         sock.deleteLater()
+
+
+class BlueIrisListener(RequestLineServer):
+    """Answers the "Web request" alert action Blue Iris fires when a camera
+    trips."""
+
+    triggered = QtCore.pyqtSignal(dict)
+
+    def __init__(self, parent=None):
+        RequestLineServer.__init__(self, 'Blue Iris listener', parent)
+
+    def dispatch(self, path, params, peer):
+        allowed = getattr(Config, 'blueiris_allow_from', None) or []
+        if allowed and peer not in allowed:
+            print('WARNING: camera alert from %s ignored '
+                  '(not in blueiris_allow_from)' % peer)
+            return '403 Forbidden'
+
+        token = getattr(Config, 'blueiris_token', '') or ''
+        if token and params.get('token', '') != token:
+            print('WARNING: camera alert from %s ignored (wrong token)' % peer)
+            return '403 Forbidden'
+
+        self.triggered.emit(params)
+        return '200 OK'
+
+
+class CommandListener(RequestLineServer):
+    """Live commands from the web control panel.
+
+    Bound to the loopback address only. The panel runs on this same machine,
+    so there is no reason for this to be reachable from the network at all -
+    the panel's own TLS, password and private-address checks are the front
+    door, and this is not a second one.
+    """
+
+    def __init__(self, token, parent=None):
+        RequestLineServer.__init__(self, 'command listener', parent)
+        self._token = token or ''
+
+    def listen(self, port):
+        return RequestLineServer.listen(
+            self, port,
+            QtNetwork.QHostAddress(
+                QtNetwork.QHostAddress.SpecialAddress.LocalHost))
+
+    def dispatch(self, path, params, peer):
+        if not self._token:
+            return '503 Service Unavailable'
+        # Compared in constant time: this is a shared secret, and the loopback
+        # binding is not a reason to be careless with it.
+        sent = params.get('token', '')
+        if not hmac.compare_digest(sent, self._token):
+            print('WARNING: command from %s ignored (wrong token)' % peer)
+            return '403 Forbidden'
+
+        name = params.get('do', '')
+        ok, message = run_command(name)
+        print('INFO: panel command %r -> %s' % (name, message))
+        return '200 %s' % message if ok else '400 %s' % message
+
+
+def toggle_weather_radio():
+    """Start or stop the NOAA weather radio stream. Returns what it did."""
+    global weatherplayer
+    if weatherplayer is None:
+        weatherplayer = Popen(['mpg123', '-q', Config.noaastream])
+        return 'weather radio started'
+    weatherplayer.kill()
+    weatherplayer = None
+    return 'weather radio stopped'
+
+
+def _cmd_next_page():
+    nextframe(1)
+    return 'showing the next page'
+
+
+def _cmd_prev_page():
+    nextframe(-1)
+    return 'showing the previous page'
+
+
+def _cmd_next_image():
+    if not Config.useslideshow:
+        return 'the slideshow is switched off'
+    objimage1.prev_next(1)
+    return 'showing the next image'
+
+
+def _cmd_prev_image():
+    if not Config.useslideshow:
+        return 'the slideshow is switched off'
+    objimage1.prev_next(-1)
+    return 'showing the previous image'
+
+
+def _cmd_slideshow_toggle():
+    if not Config.useslideshow:
+        return 'the slideshow is switched off'
+    objimage1.play_pause()
+    return 'slideshow paused' if objimage1.pause else 'slideshow resumed'
+
+
+def _cmd_foreground_toggle():
+    if foreGround.isVisible():
+        foreGround.hide()
+        return 'clock and weather hidden'
+    foreGround.show()
+    return 'clock and weather shown'
+
+
+def _cmd_hide_alert():
+    if not alertDetailPanel.isVisible():
+        return 'no alert detail was open'
+    alertDetailPanel.hide()
+    return 'alert detail closed'
+
+
+# Everything the panel may ask the running clock to do, matching the keys the
+# clock already answers to. Quitting is deliberately absent: the panel stops
+# the clock through systemd, which also stops it being restarted underneath.
+COMMANDS = {
+    'next_page': _cmd_next_page,
+    'prev_page': _cmd_prev_page,
+    'next_image': _cmd_next_image,
+    'prev_image': _cmd_prev_image,
+    'slideshow_toggle': _cmd_slideshow_toggle,
+    'foreground_toggle': _cmd_foreground_toggle,
+    'radio_toggle': toggle_weather_radio,
+    'hide_alert': _cmd_hide_alert,
+}
+
+
+def run_command(name):
+    """Carry out one named command. Returns (ok, message).
+
+    The name is only ever a key into COMMANDS, so a request cannot reach
+    anything that is not listed there.
+    """
+    handler = COMMANDS.get(name)
+    if handler is None:
+        return False, 'unknown command'
+    try:
+        return True, handler() or 'done'
+    except Exception:
+        print('WARNING:', traceback.format_exc())
+        return False, 'the clock could not do that'
+
+
+def panel_command_token():
+    """Shared secret for the control panel's command channel.
+
+    Written into conf/web_secret.json by web/set_password.py - mode 0600 and
+    never committed. Absent simply means the panel has not been set up, and the
+    command channel does not open at all.
+    """
+    try:
+        with open(os.path.join(CONF_DIR, 'web_secret.json')) as handle:
+            return json.load(handle).get('command_token', '') or ''
+    except (OSError, ValueError, AttributeError):
+        return ''
 
 
 def blueiris_server_url():
@@ -4284,6 +4464,8 @@ def myquit(signum, frame):
         attempt('slideshow', objimage1.stop)
     if blueirisListener is not None:
         attempt('Blue Iris listener', blueirisListener.stop)
+    if commandListener is not None:
+        attempt('command listener', commandListener.stop)
     attempt('camera panel', cameraPanel.stop)
     attempt('display sleep', release_display_sleep)
 
@@ -4316,18 +4498,13 @@ def nextframe(plusminus):
 class MyMain(QtWidgets.QWidget):
 
     def keyPressEvent(self, event):
-        global weatherplayer, lastkeytime
+        global lastkeytime
         if isinstance(event, QtGui.QKeyEvent):
             if event.key() == Qt.Key.Key_F4:
                 myquit(signal.SIGINT, None)
             if event.key() == Qt.Key.Key_F2:
                 if time.time() > lastkeytime:
-                    if weatherplayer is None:
-                        weatherplayer = Popen(
-                            ['mpg123', '-q', Config.noaastream])
-                    else:
-                        weatherplayer.kill()
-                        weatherplayer = None
+                    toggle_weather_radio()
                 lastkeytime = time.time() + 2
             if event.key() == Qt.Key.Key_Space:
                 nextframe(1)
@@ -4563,6 +4740,7 @@ lastkeytime = 0
 last_brightness_percent = -1
 flighttimer = None
 blueirisListener = None  # created in qtstart() only when blueiris_enabled
+commandListener = None  # created in qtstart() only when the panel is set up
 sleep_inhibit_process = None
 keepalive_timer = None
 

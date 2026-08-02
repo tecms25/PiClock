@@ -33,6 +33,26 @@
 </div>
 
 <div class="card">
+  <h2>Live commands</h2>
+  <p class="muted">These take effect on the screen straight away - nothing
+    restarts. They are the same things the clock's own keys do.</p>
+  {% for group, items in live %}
+  <h3>{{ group }}</h3>
+  <div class="commands">
+    {% for c in items %}
+    <form method="post" action="{{ url_for('command') }}">
+      <input type="hidden" name="csrf" value="{{ csrf_token() }}">
+      <input type="hidden" name="command" value="{{ c.name }}">
+      <button type="submit" class="secondary" title="{{ c.describe }}">
+        {{ c.label }} <kbd>{{ c.key }}</kbd>
+      </button>
+    </form>
+    {% endfor %}
+  </div>
+  {% endfor %}
+</div>
+
+<div class="card">
   <h2>Activity <span class="count">{{ events|length }}</span></h2>
   {% if events %}
   <table>

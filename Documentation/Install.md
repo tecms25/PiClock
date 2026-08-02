@@ -734,8 +734,8 @@ your network. It has two pages:
 
   * **Status** - service state, the clock process, a log tail and your current
     settings, all read only
-  * **Control** - start, restart and stop the clock, and the record of who did
-    what and when
+  * **Control** - start, restart and stop the clock, the live commands, and the
+    record of who did what and when
 
 Editing settings from the panel is not built yet; `conf/Config.py` is still
 edited by hand.
@@ -805,6 +805,18 @@ text.
 **Credentials are never displayed.** Settings whose names look like secrets are
 shown as `********`, and the log tail is scrubbed - PiClock logs the URLs it
 fetches and those carry your Mapbox and Tomorrow.io keys.
+
+**Live commands** are the same things the clock's own keys do - next/previous
+page, the slideshow controls, hiding the clock, the weather radio - and they
+happen on the screen immediately, without a restart. The panel passes them to
+the running clock over a channel **bound to 127.0.0.1 only**, so it is not
+reachable from the network at all: the panel's TLS, password and
+private-address checks are the one front door. Both ends check the command name
+against their own list, and the shared secret is generated into
+`conf/web_secret.json` by `web/set_password.py` - there is nothing to type in.
+Set `web_command_port` if 8128 clashes with something. Quitting the clock is
+deliberately not a live command; **Stop** does that through systemd, so it stays
+stopped.
 
 **Actions are a fixed list.** Start, restart and stop are entries in a table in
 `web/control.py`, each holding the exact command to run. What the browser sends

@@ -119,6 +119,23 @@ def write_secrets(path, data):
     os.replace(temporary, path)
 
 
+def ensure_command_token(path):
+    """Return the secret shared with the clock's command channel.
+
+    Generated here rather than configured, because nobody should have to
+    invent one: both sides read the same 0600 file. The clock reads it at
+    startup, so a token created after the clock started needs a restart before
+    live commands work.
+    """
+    data = read_secrets(path)
+    token = data.get('command_token')
+    if not token:
+        token = secrets.token_urlsafe(32)
+        data['command_token'] = token
+        write_secrets(path, data)
+    return token
+
+
 def ensure_session_key(path):
     """Return the panel's Flask session key, creating one on first run.
 

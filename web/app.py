@@ -23,6 +23,7 @@ from werkzeug.security import check_password_hash
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import audit                                                   # noqa: E402
+import commands                                                # noqa: E402
 import control                                                 # noqa: E402
 import security                                                # noqa: E402
 import status                                                  # noqa: E402
@@ -39,6 +40,7 @@ DEFAULTS = {
     'web_session_hours': 12,
     'web_cert': os.path.join(CONF, 'web-cert.pem'),
     'web_key': os.path.join(CONF, 'web-key.pem'),
+    'web_command_port': 8128,
 }
 
 
@@ -66,6 +68,7 @@ def create_app(settings=None, secrets_path=SECRETS, audit_db=AUDIT_DB):
     app = Flask(__name__)
     app.config['SETTINGS'] = settings
     app.config['PASSWORD_HASH'] = secrets.get('password_hash', '')
+    app.config['COMMAND_TOKEN'] = secrets.get('command_token', '')
     app.secret_key = secrets.get('session_key') or security.ensure_session_key(secrets_path)
     app.config.update(
         # Secure: never send the session cookie over plain http, so a
@@ -193,8 +196,25 @@ def create_app(settings=None, secrets_path=SECRETS, audit_db=AUDIT_DB):
         return render_template('control.html',
                                actions=control.listed(),
                                available=control.available(),
+                               live=commands.grouped(),
                                service=status.service_status(),
                                events=audit.recent(audit_db))
+
+    @app.route('/command', methods=['POST'])
+    def command():
+        """Pass one live command to the running clock.
+
+        Checked against the catalogue here and against the clock's own table
+        there, so a name has to appear in both to reach anything.
+        """
+        name = request.form.get('command', '')
+        ok, message = commands.send(name,
+                                    settings.get('web_command_port', 8128),
+                                    app.config['COMMAND_TOKEN'])
+        audit.record(audit_db, caller(), name, 'ok' if ok else 'failed', message)
+        app.logger.info('%s sent command %s -> %s', caller(), name, message)
+        flash(message, 'ok' if ok else 'error')
+        return redirect(url_for('control_page'))
 
     @app.route('/action', methods=['POST'])
     def action():
@@ -233,6 +253,14 @@ def main():
     if not secrets.get('password_hash'):
         fail('no panel password is set. Run:\n'
              '       venv/bin/python3 web/set_password.py')
+
+    # Created here as well as in set_password.py, so a panel upgraded from a
+    # version without live commands starts working without being reconfigured.
+    if not secrets.get('command_token'):
+        security.ensure_command_token(SECRETS)
+        print('NOTE: created a command token for live commands. Restart the '
+              'clock so it picks it up:')
+        print('      systemctl --user restart piclock')
 
     cert, key = settings['web_cert'], settings['web_key']
     if not (os.path.isfile(cert) and os.path.isfile(key)):
