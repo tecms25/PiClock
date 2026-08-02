@@ -86,6 +86,19 @@
     });
   }
 
+  /* Settings filter: hide rows whose name or help does not match. */
+  var filter = document.getElementById('settings-filter');
+  if (filter) {
+    filter.addEventListener('input', function () {
+      var needle = filter.value.trim().toLowerCase();
+      Array.prototype.forEach.call(
+        document.querySelectorAll('tr.setting'), function (row) {
+          row.hidden = needle !== '' &&
+            row.textContent.toLowerCase().indexOf(needle) === -1;
+        });
+    });
+  }
+
   document.addEventListener('submit', function (event) {
     var form = event.target;
     if (!form.hasAttribute || !form.hasAttribute('data-live')) { return; }

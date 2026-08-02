@@ -197,6 +197,46 @@ kbd {
   opacity: .75;
 }
 
+/* Settings form: label and help on the left, the field on the right. Stacks
+   below the width where two columns stop being readable. */
+table.settings th { width: 42%; padding-right: 1.25rem; }
+table.settings th label { color: var(--text); font-weight: 600; margin: 0; }
+table.settings .help { display: block; margin-top: .15rem; line-height: 1.35; }
+table.settings td { width: 58%; }
+
+table.settings input[type="text"],
+table.settings input[type="number"],
+table.settings input[type="password"],
+table.settings select,
+table.settings textarea {
+  width: 100%;
+  padding: .4rem .5rem;
+  background: var(--bg);
+  color: var(--text);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  font: 13px/1.4 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+
+table.settings textarea { resize: vertical; }
+
+#settings-filter {
+  width: 100%;
+  padding: .5rem .65rem;
+  margin-top: .5rem;
+  background: var(--bg);
+  color: var(--text);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  font-size: .95rem;
+}
+
+@media (max-width: 640px) {
+  table.settings, table.settings tbody, table.settings tr { display: block; }
+  table.settings th, table.settings td { display: block; width: auto; padding-right: 0; }
+  table.settings th { border-bottom: 0; padding-bottom: .2rem; }
+}
+
 .flash {
   padding: .7rem .9rem;
   border-radius: 8px;

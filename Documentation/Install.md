@@ -736,9 +736,7 @@ your network. It has two pages:
     settings, all read only
   * **Control** - start, restart and stop the clock, the live commands, and the
     record of who did what and when
-
-Editing settings from the panel is not built yet; `conf/Config.py` is still
-edited by hand.
+  * **Settings** - edit `conf/Config.py`, with backups you can put back
 
 The easiest way to set it up is to run the updater, which offers the whole
 thing - certificate, password, `web_enabled = 1`, and the systemd service - and
@@ -826,6 +824,27 @@ on the list. Stop and restart also need confirming in the browser.
 
 **Every state-changing request carries a CSRF token** tied to your session, on
 top of the `SameSite=Lax` cookie. Stopping the clock is worth two controls.
+
+**Editing settings is the most dangerous thing the panel does**, since
+`conf/Config.py` is Python the clock executes. Four things constrain it:
+
+  * only settings whose current value is a plain literal are editable. A
+    `LatLng(...)` or `QColor(...)` - your coordinates, the radar blocks, the
+    dimming colour - is listed but read only, and still edited by hand;
+  * whatever you type goes through `ast.literal_eval` and is written back as
+    `repr()` of the result. Nothing survives that round trip except a number,
+    string, boolean, `None`, or a container of those, so a value cannot become
+    code however it is spelled;
+  * a value may not change type - an `int` stays an `int`;
+  * the rewritten file is re-parsed and compared against the original, and is
+    only saved if the only settings that moved are the ones you changed.
+
+Comments, formatting and line endings are preserved, so the file stays as
+readable as you left it. Every save writes a timestamped `Config.py.bak-*`
+alongside it, and the Settings page can put any of them back - which also backs
+up what was there first. Secrets show as empty password boxes: blank means
+unchanged, so they are never rendered into the page. The clock reads its config
+at startup, so restart it from **Control** after saving.
 
 **Everything the panel does is recorded** in `logs/panel-audit.db`, a SQLite
 file at mode 0600: time, source address, action and outcome, including refused

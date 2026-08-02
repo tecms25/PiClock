@@ -26,6 +26,7 @@ import audit                                                   # noqa: E402
 import commands                                                # noqa: E402
 import control                                                 # noqa: E402
 import security                                                # noqa: E402
+import settings as config_settings                             # noqa: E402
 import status                                                  # noqa: E402
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -254,6 +255,33 @@ def create_app(settings=None, secrets_path=SECRETS, audit_db=AUDIT_DB):
             message += ' (this could not be written to the audit log)'
         app.logger.info('%s requested %s -> %s', caller(), name, message)
         return outcome(ok, message)
+
+    @app.route('/settings')
+    def settings_page():
+        return render_template('settings.html',
+                               rows=config_settings.read(),
+                               backups=config_settings.backups())
+
+    @app.route('/settings/save', methods=['POST'])
+    def settings_save():
+        submitted = {k: v for k, v in request.form.items()
+                     if k not in ('csrf',)}
+        ok, message, changed = config_settings.apply(submitted)
+        audit.record(audit_db, caller(), 'edit settings',
+                     'ok' if ok else 'failed',
+                     ', '.join(changed) if changed else message)
+        app.logger.info('%s edited settings -> %s', caller(), message)
+        flash(message, 'ok' if ok else 'error')
+        return redirect(url_for('settings_page'))
+
+    @app.route('/settings/restore', methods=['POST'])
+    def settings_restore():
+        name = request.form.get('backup', '')
+        ok, message = config_settings.restore(name)
+        audit.record(audit_db, caller(), 'restore config',
+                     'ok' if ok else 'failed', message)
+        flash(message, 'ok' if ok else 'error')
+        return redirect(url_for('settings_page'))
 
     @app.route('/api/status')
     def api_status():

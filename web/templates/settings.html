@@ -1,0 +1,89 @@
+{% extends "base.html" %}
+{% block title %}Settings - PiClock{% endblock %}
+{% block content %}
+
+<div class="card">
+  <h2>Settings</h2>
+  <p class="muted">These are the settings in <code>conf/Config.py</code>, in the
+    order they appear there. Saving writes the file and keeps a backup; the
+    clock reads it at startup, so restart it from
+    <a href="{{ url_for('control_page') }}">Control</a> afterwards.</p>
+  <input type="search" id="settings-filter" placeholder="Filter settings"
+         aria-label="Filter settings">
+</div>
+
+<form method="post" action="{{ url_for('settings_save') }}">
+  <input type="hidden" name="csrf" value="{{ csrf_token() }}">
+  <div class="card">
+    <table class="settings">
+      <tbody>
+      {% for row in rows %}
+        <tr class="setting" data-name="{{ row.name }}">
+          <th>
+            <label for="f-{{ row.name }}">{{ row.name }}</label>
+            {% if row.help %}<span class="muted help">{{ row.help }}</span>{% endif %}
+          </th>
+          <td>
+            {% if not row.editable %}
+              <span class="muted">{{ row.display }}</span>
+              {% if row.locked %}
+              <span class="muted">- changed by hand only, so the panel cannot
+                lock itself out</span>
+              {% endif %}
+            {% elif row.secret %}
+              {# Before the type branches: a credential must never be rendered
+                 into the page, whatever shape its value happens to be. #}
+              <input id="f-{{ row.name }}" name="{{ row.name }}" type="password"
+                     placeholder="unchanged" autocomplete="new-password">
+            {% elif row.kind == 'bool' %}
+              <select id="f-{{ row.name }}" name="{{ row.name }}">
+                <option value="1" {% if row.value %}selected{% endif %}>on (1)</option>
+                <option value="0" {% if not row.value %}selected{% endif %}>off (0)</option>
+              </select>
+            {% elif row.kind == 'int' %}
+              <input id="f-{{ row.name }}" name="{{ row.name }}" type="number" step="1"
+                     value="{{ row.value }}">
+            {% elif row.kind == 'float' %}
+              <input id="f-{{ row.name }}" name="{{ row.name }}" type="number" step="any"
+                     value="{{ row.value }}">
+            {% elif row.kind == 'text' %}
+              <input id="f-{{ row.name }}" name="{{ row.name }}" type="text"
+                     value="{{ row.display }}">
+            {% else %}
+              <textarea id="f-{{ row.name }}" name="{{ row.name }}" rows="2"
+                        spellcheck="false">{{ row.display }}</textarea>
+            {% endif %}
+          </td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  <div class="card">
+    <button type="submit">Save changes</button>
+    <span class="muted">A backup is written first. Secrets left blank stay as
+      they are.</span>
+  </div>
+</form>
+
+<div class="card">
+  <h2>Backups <span class="count">{{ backups|length }}</span></h2>
+  {% if backups %}
+  <p class="muted">Putting one back also backs up what is there now.</p>
+  <div class="actions">
+    {% for b in backups[:12] %}
+    <form method="post" action="{{ url_for('settings_restore') }}" data-live
+          data-confirm="Replace conf/Config.py with the copy from {{ b.when }}?">
+      <input type="hidden" name="csrf" value="{{ csrf_token() }}">
+      <input type="hidden" name="backup" value="{{ b.name }}">
+      <button type="submit" class="secondary">Restore</button>
+      <span class="muted">{{ b.when }}</span>
+    </form>
+    {% endfor %}
+  </div>
+  {% else %}
+  <p class="muted">None yet. One is written each time you save.</p>
+  {% endif %}
+</div>
+
+{% endblock %}
