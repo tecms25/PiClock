@@ -208,6 +208,13 @@ def create_app(settings=None, secrets_path=SECRETS, audit_db=AUDIT_DB):
                                available=control.available(),
                                live=commands.grouped(),
                                streams=commands.streams(),
+                               # Asked of the clock as the page is built, so a
+                               # stream that died after "playing ..." was
+                               # reported does not leave that standing.
+                               audio_state=commands.send(
+                                   'audio_status',
+                                   settings.get('web_command_port', 8128),
+                                   app.config['COMMAND_TOKEN'])[1],
                                service=status.service_status(),
                                events=audit.recent(audit_db))
 

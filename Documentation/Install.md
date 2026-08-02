@@ -88,7 +88,7 @@ Once that is done, you'll have a new directory called PiClock.
 For a standard install - no GPIO buttons - an installer script can do the rest
 of this section for you:
 it creates the virtual environment, installs PyQt6 and the required Python
-packages (offering to use `apt` for `python3-pyqt6`/`mpg123` on Raspberry Pi
+packages (offering to use `apt` for `python3-pyqt6`/`mpg123`/`ffmpeg` on Raspberry Pi
 OS), installs the bundled Open Sans fonts from the `fonts` folder for the
 current user, sets up `conf/ApiKeys.py` and `conf/Config.py` from the
 examples, and interactively prompts you for your location, API keys, map
@@ -133,10 +133,12 @@ python3 -m pip install --upgrade pip
 python3 -m pip install -r requirements.txt
 ```
 ### Optional software packages
-#### Optional - mpg123 Audio Streaming
-Get optional mpg123 to play NOAA weather radio streams
+#### Optional - audio stream players
+mpg123 plays MP3 streams such as NOAA weather radio. ffmpeg supplies ffplay,
+which is also needed for `.m3u8` (HLS) feeds - most scanner streams - because
+mpg123 cannot follow an HLS playlist.
 ```
-sudo apt install mpg123
+sudo apt install mpg123 ffmpeg
 ```
 
 ### Exit virtual environment
@@ -824,7 +826,11 @@ first stream from the keyboard.
 **A scanner feed almost always needs more than mpg123.** An `.m3u8` is an HLS
 playlist of segments, not an MP3 stream, and mpg123 cannot follow one. PiClock
 uses the first of `ffplay`, `mpv`, `cvlc` or `mpg123` that is installed and can
-handle the URL, so for HLS install one of:
+handle the URL.
+
+`install.sh` installs `ffmpeg` (which provides `ffplay`) alongside `mpg123`,
+and finishes by reporting what the machine can actually play, so there is
+normally nothing to do. To add a player later:
 
 ```
 sudo apt install ffmpeg     # provides ffplay - the smallest of the three

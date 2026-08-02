@@ -264,19 +264,52 @@ USE_SYSTEM_SITE_PACKAGES=0
 if [ "$OS_NAME" = "Linux" ] && command -v apt-get >/dev/null 2>&1; then
   echo ""
   echo "Detected a Debian/Raspberry Pi OS based Linux system."
-  read -r -p "Install/update system packages (python3-full, python3-pyqt6, mpg123) via apt? [Y/n] " REPLY
+  # ffmpeg supplies ffplay, which is what plays a scanner or internet radio
+  # feed: those are nearly always .m3u8, and mpg123 cannot follow an HLS
+  # playlist. mpg123 stays for plain MP3 streams like NOAA weather radio.
+  read -r -p "Install/update system packages (python3-full, python3-pyqt6, mpg123, ffmpeg) via apt? [Y/n] " REPLY
   if [ "$REPLY" != "n" ] && [ "$REPLY" != "N" ]; then
     sudo apt update
-    sudo apt install -y python3-full python3-pyqt6 mpg123
+    sudo apt install -y python3-full python3-pyqt6 mpg123 ffmpeg
     USE_SYSTEM_SITE_PACKAGES=1
   fi
 elif [ "$OS_NAME" = "Darwin" ] && command -v brew >/dev/null 2>&1; then
   echo ""
-  read -r -p "Install mpg123 via Homebrew (needed for the NOAA weather radio stream)? [Y/n] " REPLY
+  read -r -p "Install mpg123 and ffmpeg via Homebrew (for the audio streams)? [Y/n] " REPLY
   if [ "$REPLY" != "n" ] && [ "$REPLY" != "N" ]; then
-    brew install mpg123
+    brew install mpg123 ffmpeg
   fi
 fi
+
+# Whatever route was taken - apt, brew, declined, or a distribution without
+# either - say plainly what can be played, because the failure otherwise turns
+# up much later as a scanner feed that silently will not start.
+report_audio_players() {
+  HAVE_MP3=""
+  HAVE_HLS=""
+  command -v mpg123 >/dev/null 2>&1 && HAVE_MP3="mpg123"
+  for PLAYER in ffplay mpv cvlc; do
+    if command -v "$PLAYER" >/dev/null 2>&1; then
+      HAVE_HLS="$PLAYER"
+      break
+    fi
+  done
+
+  echo ""
+  if [ -n "$HAVE_HLS" ]; then
+    echo "Audio: MP3 and .m3u8 (HLS) streams can both be played ($HAVE_HLS found)."
+  elif [ -n "$HAVE_MP3" ]; then
+    echo "Audio: MP3 streams can be played (mpg123 found), but .m3u8 (HLS)"
+    echo "       feeds - most police/fire/EMS scanners - cannot."
+    echo "       Install one of these to enable them:"
+    echo "         sudo apt install ffmpeg     # or mpv, or vlc"
+  else
+    echo "Audio: no player found, so no streams can be played."
+    echo "       Install one with: sudo apt install ffmpeg mpg123"
+  fi
+}
+
+report_audio_players
 
 if [ -f "venv/bin/activate" ]; then
   echo ""

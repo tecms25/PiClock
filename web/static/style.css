@@ -311,6 +311,16 @@ details.group[open] > summary::before { transform: rotate(45deg); }
 details.group > summary:hover { color: var(--text); }
 details.group > .settings { margin: 0 1.15rem 1rem; }
 
+.state-line {
+  margin: 0 0 .75rem;
+  padding: .5rem .7rem;
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  font-size: .875rem;
+  overflow-wrap: anywhere;
+}
+
 .flash {
   padding: .7rem .9rem;
   border-radius: 8px;

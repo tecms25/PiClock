@@ -14,6 +14,7 @@ import shutil
 import signal
 import subprocess
 import sys
+import tempfile
 import time
 import traceback
 import dateutil.parser
@@ -3030,12 +3031,27 @@ class CommandListener(RequestLineServer):
 # on the machine that can play it - which is worth saying plainly rather than
 # failing quietly.
 AUDIO_PLAYERS = (
-    ('ffplay', ['ffplay', '-nodisp', '-autoexit', '-loglevel', 'error']),
-    ('mpv', ['mpv', '--no-video', '--really-quiet']),
-    ('cvlc', ['cvlc', '--intf', 'dummy', '--no-video', '--play-and-exit']),
+    # No -autoexit: these are live feeds with no end, and a momentary gap in
+    # the segment list must not be read as one. The reconnect options let a
+    # scanner feed survive a dropped connection instead of dying with it, and
+    # a user agent is sent because some stream hosts refuse the default.
+    ('ffplay', ['ffplay', '-nodisp', '-loglevel', 'warning',
+                '-user_agent', 'PiClock/1.0',
+                '-reconnect', '1', '-reconnect_streamed', '1',
+                '-reconnect_delay_max', '10']),
+    ('mpv', ['mpv', '--no-video', '--really-quiet',
+             '--user-agent=PiClock/1.0']),
+    ('cvlc', ['cvlc', '--intf', 'dummy', '--no-video',
+              '--http-user-agent=PiClock/1.0']),
     ('mpg123', ['mpg123', '-q']),
 )
 HLS_CAPABLE = ('ffplay', 'mpv', 'cvlc')
+
+# A live stream can take a while to start - an HLS feed has to fetch several
+# segments before it makes a sound, and 10-20 seconds is normal. A player that
+# exits sooner than this has failed rather than finished, and what it wrote to
+# stderr is the only thing that says why.
+AUDIO_STARTUP_SECONDS = 30
 
 
 def is_hls(url):
@@ -3083,6 +3099,32 @@ def audio_playing_name():
     return Locale.LAudioUnknown
 
 
+def audio_error_text():
+    """Whatever the player wrote to stderr, trimmed to something readable."""
+    if audio_errors is None:
+        return ''
+    try:
+        audio_errors.seek(0)
+        text = audio_errors.read().decode('utf-8', 'replace').strip()
+    except (OSError, ValueError):
+        return ''
+    if not text:
+        return ''
+    # The last lines are the ones that say why it gave up.
+    lines = [line.strip() for line in text.splitlines() if line.strip()]
+    return ' | '.join(lines[-3:])[:400]
+
+
+def _close_audio_errors():
+    global audio_errors
+    if audio_errors is not None:
+        try:
+            audio_errors.close()
+        except OSError:
+            pass
+        audio_errors = None
+
+
 def stop_audio_stream():
     """Stop whatever is playing. Returns what it did."""
     global audio_player, audio_index
@@ -3095,6 +3137,7 @@ def stop_audio_stream():
         pass
     audio_player = None
     audio_index = None
+    _close_audio_errors()
     update_audio_indicator()
     return 'stopped %s' % was
 
@@ -3118,14 +3161,26 @@ def play_audio_stream(index):
         return False, Locale.LAudioNoPlayer
 
     stop_audio_stream()
+    global audio_errors, audio_started, audio_last_error
+    audio_last_error = ''
+    # stderr to a temp file rather than DEVNULL: when a player gives up after a
+    # second, its complaint is the only evidence of why, and throwing it away
+    # turns a fixable problem into "the stream just stops".
+    try:
+        audio_errors = tempfile.TemporaryFile()
+    except OSError:
+        audio_errors = None
     try:
         audio_player = Popen(argv, stdout=subprocess.DEVNULL,
-                             stderr=subprocess.DEVNULL)
+                             stderr=audio_errors or subprocess.DEVNULL)
     except OSError as exc:
         audio_player = None
         audio_index = None
+        _close_audio_errors()
         return False, 'could not start %s: %s' % (stream['name'], exc)
     audio_index = index
+    audio_started = time.monotonic()
+    print('INFO: playing %s with %s' % (stream['name'], argv[0]))
     update_audio_indicator()
     return True, 'playing %s' % stream['name']
 
@@ -3137,15 +3192,45 @@ def check_audio_player():
     its own would otherwise leave the on-screen indicator claiming something is
     still playing.
     """
-    global audio_player, audio_index
+    global audio_player, audio_index, audio_last_error
     if audio_player is None:
         return
-    if audio_player.poll() is None:
+    code = audio_player.poll()
+    if code is None:
         return
-    print('INFO: audio stream ended (%s)' % (audio_playing_name() or 'unknown'))
+
+    name = audio_playing_name() or 'unknown'
+    ran_for = time.monotonic() - audio_started
+    detail = audio_error_text()
+    if ran_for < AUDIO_STARTUP_SECONDS:
+        # Too soon to have been playing; this is a failure, not an ending.
+        audio_last_error = detail or ('the player exited with status %s and '
+                                      'said nothing' % code)
+        print('ERROR: %s stopped after %.1fs: %s' % (name, ran_for,
+                                                     audio_last_error))
+    else:
+        audio_last_error = ''
+        print('INFO: audio stream ended (%s) after %.0fs%s'
+              % (name, ran_for, ': ' + detail if detail else ''))
     audio_player = None
     audio_index = None
+    _close_audio_errors()
     update_audio_indicator()
+
+
+def audio_status_text():
+    """What the control panel is told about audio.
+
+    Carries the last failure as well as the current state: a stream that dies
+    a second after starting would otherwise leave the panel showing the
+    cheerful "playing ..." it printed before anything went wrong.
+    """
+    name = audio_playing_name()
+    if name:
+        return 'playing %s' % name
+    if audio_last_error:
+        return 'nothing is playing - the last one stopped: %s' % audio_last_error
+    return 'nothing is playing'
 
 
 def toggle_weather_radio():
@@ -3217,7 +3302,7 @@ COMMANDS = {
     'hide_alert': _cmd_hide_alert,
     'audio_play': lambda params: play_audio_stream(params.get('stream', '')),
     'audio_stop': lambda params: stop_audio_stream(),
-    'audio_status': lambda params: audio_playing_name() or 'nothing is playing',
+    'audio_status': lambda params: audio_status_text(),
 }
 
 
@@ -4874,8 +4959,11 @@ lastmin = -1
 lastday = -1
 pdy = ''
 lasttimestr = ''
-audio_player = None   # the Popen playing a stream, or None
-audio_index = None    # which entry of audio_streams() it is
+audio_player = None    # the Popen playing a stream, or None
+audio_index = None     # which entry of audio_streams() it is
+audio_started = 0.0    # when it started, to tell a failure from an ending
+audio_errors = None    # temp file collecting the player's stderr
+audio_last_error = ''  # why the last one stopped, for the control panel
 lastkeytime = 0
 last_brightness_percent = -1
 flighttimer = None
