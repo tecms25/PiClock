@@ -1,3 +1,4 @@
+import json
 import os
 import re
 import shutil
@@ -97,7 +98,11 @@ if os.path.isfile(apikeysFileName):
 # worth catching here: each starts a clock at login and the two fight over the
 # display.
 AUTOSTART = os.path.expanduser('~/.config/autostart/PiClock.desktop')
-USER_UNIT = os.path.expanduser('~/.config/systemd/user/piclock.service')
+UNIT_DIR = os.path.expanduser('~/.config/systemd/user')
+
+
+def unit_path(name):
+    return os.path.join(UNIT_DIR, name)
 
 
 def ask(question, default_yes=True):
@@ -111,24 +116,26 @@ def ask(question, default_yes=True):
     return answer.startswith('y')
 
 
-def install_systemd_unit():
-    """Write the user unit with this install's path baked in, then enable it."""
-    template = os.path.join('systemd', 'piclock.service')
+def install_systemd_unit(name, late_note):
+    """Write one of the repo's unit templates with this install's path baked
+    in, then enable it. late_note is what to say when it could only be enabled
+    rather than started."""
+    template = os.path.join('systemd', name)
     if not os.path.isfile(template):
         print('WARNING: %s is missing, so the service was not set up.' % template)
         return False
     with open(template) as handle:
         text = handle.read().replace('__PICLOCK_DIR__', os.getcwd())
-    os.makedirs(os.path.dirname(USER_UNIT), exist_ok=True)
-    with open(USER_UNIT, 'w') as handle:
+    os.makedirs(UNIT_DIR, exist_ok=True)
+    with open(unit_path(name), 'w') as handle:
         handle.write(text)
-    print('Wrote ' + USER_UNIT)
+    print('Wrote ' + unit_path(name))
     os.system('systemctl --user daemon-reload')
-    if os.system('systemctl --user enable --now piclock.service') != 0:
+    if os.system('systemctl --user enable --now ' + name) != 0:
         # Starting needs a session bus, which a plain ssh login does not have.
-        # Enabling alone still brings it up at the next graphical login.
-        os.system('systemctl --user enable piclock.service')
-        print('Enabled. The clock starts at your next graphical login.')
+        # Enabling alone still brings it up at the next login.
+        os.system('systemctl --user enable ' + name)
+        print(late_note)
     return True
 
 
@@ -146,7 +153,7 @@ if not sys.platform.startswith('linux'):
 elif shutil.which('systemctl') is None:
     print('systemd is not available here; leaving the autostart entry alone.')
 else:
-    has_unit = os.path.isfile(USER_UNIT)
+    has_unit = os.path.isfile(unit_path('piclock.service'))
     has_autostart = os.path.isfile(AUTOSTART)
     if has_unit and has_autostart:
         print('Both piclock.service and the autostart shortcut are set up.')
@@ -160,13 +167,17 @@ else:
         print('would restart the clock if it crashed, and lets the web control')
         print('panel restart it on demand.')
         if ask('Switch to the systemd service?'):
-            if install_systemd_unit():
+            if install_systemd_unit('piclock.service',
+                                    'Enabled. The clock starts at your next '
+                                    'graphical login.'):
                 remove_autostart()
     else:
         print('No autostart shortcut and no service, so the clock is started')
         print('by hand.')
         if ask('Set up the systemd service?', default_yes=False):
-            install_systemd_unit()
+            install_systemd_unit('piclock.service',
+                                 'Enabled. The clock starts at your next '
+                                 'graphical login.')
 
 # A newer PiClock usually brings new Config.py settings with it. Offer to add
 # the ones this install is missing, rather than leaving them to be found the
@@ -178,3 +189,112 @@ try:
 except Exception:
     print('WARNING: could not check for new config settings')
     print(traceback.format_exc())
+
+# The web control panel opens a listening socket, so an update never switches
+# it on by itself - it is offered, and defaults to no. This runs after the
+# config merge above because web_enabled only exists in Config.py once that has
+# added it.
+CONFIG = os.path.join('conf', 'Config.py')
+WEB_CERT = os.path.join('conf', 'web-cert.pem')
+WEB_KEY = os.path.join('conf', 'web-key.pem')
+WEB_SECRET = os.path.join('conf', 'web_secret.json')
+WEB_UNIT = 'piclock-web.service'
+
+
+def config_value(name, default=None):
+    """One setting read out of Config.py without executing it."""
+    try:
+        import merge_config
+        text, _ = merge_config.read_text(CONFIG)
+        return merge_config.literal_settings(text).get(name, default)
+    except Exception:
+        return default
+
+
+def enable_web_in_config():
+    """Set web_enabled = 1, keeping the file's comments and line endings."""
+    try:
+        import merge_config
+        text, newline = merge_config.read_text(CONFIG)
+    except Exception:
+        print('WARNING: could not read ' + CONFIG)
+        return False
+    replacement = 'web_enabled = 1  # 1 to enable, 0 to disable'
+    pattern = re.compile(r'^web_enabled\s*=.*$', re.M)
+    if pattern.search(text):
+        text = pattern.sub(replacement, text, count=1)
+    else:
+        # An install that declined the config merge above has no such setting
+        # yet. Appending it beats leaving the panel unable to start.
+        text = text.rstrip('\n') + '\n\n' + replacement + '\n'
+    merge_config.write_text(CONFIG, text, newline)
+    print('Set web_enabled = 1 in ' + CONFIG)
+    return True
+
+
+def web_password_set():
+    try:
+        with open(WEB_SECRET) as handle:
+            return bool(json.load(handle).get('password_hash'))
+    except (OSError, ValueError, AttributeError):
+        return False
+
+
+print('\nChecking the web control panel')
+if not os.path.isfile(CONFIG):
+    print('There is no conf/Config.py yet, so there is nothing to set up.')
+else:
+    have_cert = os.path.isfile(WEB_CERT) and os.path.isfile(WEB_KEY)
+    have_password = web_password_set()
+    web_on = bool(int(config_value('web_enabled', 0) or 0))
+    systemd_here = bool(sys.platform.startswith('linux')
+                        and shutil.which('systemctl'))
+    have_unit = os.path.isfile(unit_path(WEB_UNIT))
+
+    missing = []
+    if not have_cert:
+        missing.append('a TLS certificate')
+    if not have_password:
+        missing.append('a password')
+    if not web_on:
+        missing.append('web_enabled = 1')
+    if systemd_here and not have_unit:
+        missing.append('its systemd service')
+
+    if not missing:
+        print('Already set up, on port %s.' % config_value('web_port', 8443))
+        # The panel is running last release's code until it is restarted, and
+        # restarting costs nothing: the session key is stored, so nobody is
+        # signed out by it.
+        if systemd_here and os.system(
+                'systemctl --user is-active --quiet ' + WEB_UNIT) == 0:
+            os.system('systemctl --user restart ' + WEB_UNIT)
+            print("Restarted it so it is running this update's code.")
+    else:
+        print('An HTTPS page for checking on the clock from another machine on')
+        print('your network. It answers private (RFC 1918) addresses only, and')
+        print('always needs a password.')
+        print('Still needed: ' + ', '.join(missing) + '.')
+        if ask('Set the web control panel up now?', default_yes=False):
+            done = True
+            if not have_cert:
+                print('')
+                done = os.system('bash web/make_cert.sh') == 0
+            if done and not have_password:
+                print('')
+                done = os.system('"%s" web/set_password.py' % sys.executable) == 0
+            if done and not web_on:
+                done = enable_web_in_config()
+            if done and systemd_here and not have_unit:
+                install_systemd_unit(
+                    WEB_UNIT, 'Enabled. The panel starts at your next login.')
+            if done:
+                print('\nThe panel is at https://<this machine>:%s/'
+                      % config_value('web_port', 8443))
+                print('The certificate is self-signed, so your browser asks you')
+                print('to accept it the first time.')
+                if not systemd_here:
+                    print('Start it with: %s web/app.py' % sys.executable)
+            else:
+                print('\nSetup did not finish. Run update.sh again, or follow')
+                print('the web control panel section of Documentation/Install.md')

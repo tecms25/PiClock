@@ -1,0 +1,32 @@
+[Unit]
+Description=PiClock web control panel
+
+# Unlike the clock itself this needs no display, so it is ordered after the
+# network rather than after the graphical session. That also means it stays up
+# while the clock is stopped - which is the point, since the panel is how you
+# start the clock again.
+After=network-online.target
+
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+WorkingDirectory=__PICLOCK_DIR__
+
+# Quoted because systemd splits on whitespace and runs this without a shell.
+ExecStart="__PICLOCK_DIR__/venv/bin/python3" -u "__PICLOCK_DIR__/web/app.py"
+
+Restart=on-failure
+RestartSec=10
+
+# The panel reads the config and runs systemctl for its own user, and needs
+# nothing else. These limits cost nothing and shrink what a flaw in it reaches.
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectKernelTunables=yes
+ProtectControlGroups=yes
+RestrictNamespaces=yes
+RestrictSUIDSGID=yes
+
+[Install]
+WantedBy=default.target

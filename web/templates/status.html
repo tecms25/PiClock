@@ -1,0 +1,79 @@
+{% extends "base.html" %}
+{% block title %}Status - PiClock{% endblock %}
+{% block content %}
+
+<div class="grid">
+  <div class="card">
+    <h2>Service</h2>
+    {% set s = data.service %}
+    {% if s.available %}
+    <p class="state {{ 'good' if s.active == 'active' else 'bad' }}">{{ s.active }}</p>
+    <dl>
+      <dt>Start at login</dt><dd>{{ s.enabled }}</dd>
+      <dt>Running since</dt><dd>{{ s.since or '-' }}</dd>
+      <dt>Restarts</dt><dd>{{ s.restarts }}</dd>
+    </dl>
+    {% else %}
+    <p class="state unknown">unknown</p>
+    <p class="muted">{{ s.note }}</p>
+    {% endif %}
+  </div>
+
+  <div class="card">
+    <h2>Clock process</h2>
+    {% set p = data.process %}
+    {% if p.running %}
+    <p class="state good">running</p>
+    <dl>
+      <dt>PID</dt><dd>{{ p.pid }}</dd>
+      <dt>CPU</dt><dd>{{ p.cpu }}%</dd>
+      <dt>Memory</dt><dd>{{ p.mem }}%</dd>
+      <dt>Uptime</dt><dd>{{ p.elapsed }}</dd>
+    </dl>
+    {% else %}
+    <p class="state bad">not running</p>
+    {% endif %}
+  </div>
+
+  <div class="card">
+    <h2>Host</h2>
+    <dl>
+      <dt>Hostname</dt><dd>{{ data.host.hostname or '-' }}</dd>
+      <dt>Load</dt><dd>{{ data.host.load or '-' }}</dd>
+      <dt>Disk free</dt><dd>{{ data.host.disk_free or '-' }}</dd>
+    </dl>
+    <p class="muted">{{ data.host.uptime }}</p>
+  </div>
+</div>
+
+{% if data.problems %}
+<div class="card">
+  <h2>Recent problems <span class="count">{{ data.problems|length }}</span></h2>
+  <pre class="log problems">{% for line in data.problems %}{{ line }}
+{% endfor %}</pre>
+</div>
+{% endif %}
+
+<div class="card">
+  <h2>Log</h2>
+  <pre class="log">{% for line in data.log %}{{ line }}
+{% endfor %}</pre>
+</div>
+
+<div class="card">
+  <h2>Settings <span class="count">{{ data.settings|length }}</span></h2>
+  <p class="muted">Read only in this version. Editing arrives in a later phase.</p>
+  <table>
+    <tbody>
+    {% for row in data.settings %}
+      <tr>
+        <th>{{ row.name }}</th>
+        <td>{% if row.secret %}<span class="redacted">{{ row.value }}</span>{% else %}{{ row.value }}{% endif %}</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+<p class="muted footer">Generated {{ data.generated }}</p>
+{% endblock %}

@@ -724,6 +724,82 @@ alone, so a deliberate quit stays quit. Start it again with
 at boot, change `-n` to `-d 15` in the unit's `ExecStart` to make the clock wait
 15 seconds before starting.
 
+### Web control panel
+
+An HTTPS page for checking on the clock from another machine on your network.
+This first version is **read only** - it shows the service state, the clock
+process, a log tail and your current settings, but changes nothing.
+
+The easiest way to set it up is to run the updater, which offers the whole
+thing - certificate, password, `web_enabled = 1`, and the systemd service - and
+does only the parts you are missing:
+
+```
+bash update.sh
+```
+
+It defaults to **no**, because the panel opens a listening socket and an update
+should never switch that on by itself. On later runs it leaves a working setup
+alone, and just restarts the panel so it picks up the new code.
+
+To do it by hand instead:
+
+```
+bash web/make_cert.sh                        # self-signed certificate
+venv/bin/python3 web/set_password.py         # the shared password
+```
+
+Then set `web_enabled = 1` in `conf/Config.py` and start it:
+
+```
+mkdir -p ~/.config/systemd/user
+sed "s|__PICLOCK_DIR__|$HOME/PiClock|g" ~/PiClock/systemd/piclock-web.service \
+    > ~/.config/systemd/user/piclock-web.service
+systemctl --user daemon-reload
+systemctl --user enable --now piclock-web
+```
+
+Open `https://<your-pi>:8443/`. The certificate is self-signed, so your browser
+warns once; accept it and it is remembered. Settings in `conf/Config.py`:
+
+  * `web_enabled` - 1 to enable, 0 to disable (off by default)
+  * `web_port` - 8443 by default
+  * `web_bind` - `'0.0.0.0'` for every interface, `'127.0.0.1'` for the Pi only
+  * `web_session_hours` - how long a sign-in lasts
+
+#### How it is secured
+
+The panel is a way to read - and later change - what the Pi runs, so it has two
+independent gates and refuses to start if either is missing.
+
+**It answers private networks only.** RFC 1918 (`10/8`, `172.16/12`,
+`192.168/16`) plus loopback, link-local and the IPv6 equivalents. Anything else
+gets a 403 before the login page is even rendered, so an outside caller has no
+password prompt to attack. This is deliberately based on the real connection
+address and **not** on `X-Forwarded-For`, which any caller can set - so putting
+a reverse proxy in front of the panel makes every request look like it comes
+from the proxy. Don't do that without changing the check to understand your
+proxy.
+
+**One shared password**, stored only as a scrypt hash in
+`conf/web_secret.json` (mode 0600, never committed). Five wrong guesses locks
+that address out for five minutes. Changing the password signs every browser
+out, including yours.
+
+**TLS is required.** `web/make_cert.sh` writes a 10 year self-signed
+certificate with your hostname and LAN addresses in it, TLS 1.2 is the minimum
+version, and the session cookie is `Secure`, `HttpOnly` and `SameSite=Lax`.
+Self-signed is worth having: without it the password crosses your LAN in clear
+text.
+
+**Credentials are never displayed.** Settings whose names look like secrets are
+shown as `********`, and the log tail is scrubbed - PiClock logs the URLs it
+fetches and those carry your Mapbox and Tomorrow.io keys.
+
+It runs the Werkzeug server, which is right for one user on a LAN but is not a
+hardened public web server. Do not expose port 8443 to the internet; reach it
+over a VPN if you need it from outside.
+
 ### Setting the Pi to auto reboot every day
 This is optional but some may want their PiClock to reboot every day.  I do this with mine,
 but it is probably not needed.

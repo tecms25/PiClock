@@ -7,6 +7,11 @@ conf/ApiKeys.py
 conf/Config.py
 conf/locale_*.py.bak-*
 
+# Web control panel secrets: the password hash, session key and TLS private key
+conf/web_secret.json
+conf/web-cert.pem
+conf/web-key.pem
+
 # Logs
 logs/
 Clock/log.count

@@ -278,3 +278,16 @@ radar4 = {
         },
     )
 }
+
+# WEB CONTROL PANEL
+# A small HTTPS page for checking on the clock from another machine. It is
+# reachable from private (RFC 1918) networks only, and always needs the
+# password set with 'python3 web/set_password.py'.
+# Run 'bash web/make_cert.sh' once to create its certificate.
+web_enabled = 0  # 1 to enable, 0 to disable
+web_port = 8443
+# Which address to listen on. '0.0.0.0' is every interface; the private
+# network check still applies, so this does not expose it to the internet.
+# Use '127.0.0.1' to allow only a browser running on the Pi itself.
+web_bind = '0.0.0.0'
+web_session_hours = 12  # how long a sign-in lasts
