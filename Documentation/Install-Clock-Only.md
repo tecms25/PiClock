@@ -318,6 +318,9 @@ Settings:
   * `blueiris_allow_from` - optional source address allow-list
   * `blueiris_ignore_ssl_errors` - accept a certificate that fails validation
   * `blueiris_use_session_login` - sign in via the JSON interface (see below)
+  * `blueiris_session_seconds` - how long a sign-in is reused before signing in
+    again; keep it under the Blue Iris session timeout (about a minute by
+    default), or set 0 to sign in afresh every time
 
 In Blue Iris, open the camera's settings, go to **Alerts**, and add an
 **On alert** action of **Web request**. Point it at the clock:

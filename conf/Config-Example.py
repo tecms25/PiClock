@@ -98,6 +98,12 @@ blueiris_ignore_ssl_errors = 0
 # Iris, because that setting makes Blue Iris refuse user/pw on a URL. Needs
 # blueiris_user and blueiris_password set either way.
 blueiris_use_session_login = 0
+# How long a signed-in session is reused before signing in again. Blue
+# Iris drops an idle session after about a minute by default, so keep this
+# comfortably under whatever that timeout is set to on your server. Set it
+# to 0 to sign in afresh for every alert. Only used with
+# blueiris_use_session_login = 1.
+blueiris_session_seconds = 45
 # Optional source address allow-list, e.g. ['192.168.1.10'] for the Blue Iris
 # machine. Empty list accepts an alert from anywhere on the network.
 blueiris_allow_from = []

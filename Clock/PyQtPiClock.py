@@ -2608,6 +2608,9 @@ class CameraPanel(QtWidgets.QFrame):
             tile = CameraTile(self.card, camera, self._tile_style)
             tile.expired.connect(self._on_expired)
             tile.lost.connect(self._on_lost)
+            # Arriving frames are traffic on the session, so it is not idle
+            # while a stream is up and does not need signing in again.
+            tile.stream.frame.connect(self._on_stream_frame)
             tile.say(Locale.LCameraConnecting % camera)
             self.tiles.append(tile)
             self._relayout()
@@ -2738,7 +2741,7 @@ class CameraPanel(QtWidgets.QFrame):
 
     def _begin(self, tile):
         """Start (or restart) one tile's stream, signing in first if needed."""
-        if getattr(Config, 'blueiris_use_session_login', 0) and not self.session.key:
+        if getattr(Config, 'blueiris_use_session_login', 0) and not self.session.is_fresh():
             tile.say(Locale.LCameraSigningIn)
             self.session.acquire()  # _on_session_ready starts whatever is waiting
             return
@@ -2747,6 +2750,9 @@ class CameraPanel(QtWidgets.QFrame):
             tile.say(Locale.LCameraNoServer)
             return
         tile.stream.start(url, bool(getattr(Config, 'blueiris_ignore_ssl_errors', 0)))
+
+    def _on_stream_frame(self, _image):
+        self.session.touch()
 
     def _on_session_ready(self, key):
         for tile in self.tiles:
@@ -2764,7 +2770,13 @@ class CameraPanel(QtWidgets.QFrame):
             return
         # A session that has expired looks exactly like a refused one, so drop
         # it and sign in again once before giving up.
-        if self.session.key and not tile.retried:
+        # Keyed off this tile's own retry flag rather than off the session
+        # still holding a key: with several cameras up, the first tile to fail
+        # clears the key, and the rest would then skip their retry entirely and
+        # go straight to "unavailable". BlueIrisSession._busy already collapses
+        # the concurrent acquire() calls into one login.
+        if not tile.retried and (self.session.key
+                                 or getattr(Config, 'blueiris_use_session_login', 0)):
             tile.retried = True
             self.session.clear()
             tile.say(Locale.LCameraSigningInAgain)
@@ -2962,15 +2974,64 @@ class BlueIrisSession(QtCore.QObject):
     ready = QtCore.pyqtSignal(str)
     failed = QtCore.pyqtSignal(str)
 
+    # A login that neither answers nor fails would leave _busy set forever, and
+    # acquire() early-returns while it is - so every later camera alert would
+    # silently never sign in. A timeout guarantees the reply settles.
+    TIMEOUT_MS = 10000
+
+    # Blue Iris drops a session after about a minute of inactivity (its
+    # default). A key cached from an earlier alert is therefore usually dead by
+    # the time the next one arrives, and trying it anyway costs a failed stream
+    # and a visible "signing in again" before it recovers. Anything older than
+    # blueiris_session_seconds is treated as gone and replaced before the
+    # stream starts. This is the fallback for a config predating that setting.
+    DEFAULT_IDLE_SECONDS = 45
+
     def __init__(self, parent=None):
         QtCore.QObject.__init__(self, parent)
         self.key = ''
         self._reply = None
         self._busy = False
+        self._used = 0.0
 
     def clear(self):
         """Forget the key, so the next camera logs in afresh."""
         self.key = ''
+        self._used = 0.0
+
+    def idle_limit(self):
+        """Seconds a cached key stays worth sending, from Config.
+
+        A config that will not parse as a number falls back to the default
+        rather than stopping the cameras working: a typo here should cost an
+        extra login, not the feature.
+        """
+        try:
+            return int(getattr(Config, 'blueiris_session_seconds',
+                               self.DEFAULT_IDLE_SECONDS))
+        except (TypeError, ValueError):
+            print('WARNING: blueiris_session_seconds is not a number, using %d'
+                  % self.DEFAULT_IDLE_SECONDS)
+            return self.DEFAULT_IDLE_SECONDS
+
+    def is_fresh(self):
+        """True while the cached key is recent enough to be worth sending."""
+        if not self.key:
+            return False
+        limit = self.idle_limit()
+        if limit <= 0:
+            return False  # 0 means sign in afresh for every alert
+        return (time.monotonic() - self._used) < limit
+
+    def touch(self):
+        """Note that the session was just used successfully.
+
+        A running stream is traffic, so it holds the session open at the far
+        end; without this every frame-producing stream would still be counted
+        as idle and re-authenticated for no reason.
+        """
+        if self.key:
+            self._used = time.monotonic()
 
     def acquire(self):
         if self._busy:
@@ -2984,16 +3045,40 @@ class BlueIrisSession(QtCore.QObject):
         self._busy = True
         self._post({'cmd': 'login'}, self._challenged)
 
-    def _post(self, payload, handler):
+    def _post(self, payload, handler, attempt=1):
         request = QNetworkRequest(QUrl(blueiris_server_url() + '/json'))
         request.setRawHeader(b'User-Agent', b'PiClock/1.0')
         request.setHeader(QNetworkRequest.KnownHeaders.ContentTypeHeader,
                           'application/json')
+        request.setTransferTimeout(self.TIMEOUT_MS)
         reply = manager.post(request, json.dumps(payload).encode('utf-8'))
         if getattr(Config, 'blueiris_ignore_ssl_errors', 0):
             reply.sslErrors.connect(lambda errors, r=reply: r.ignoreSslErrors())
-        reply.finished.connect(lambda r=reply: handler(r))
+        reply.finished.connect(
+            lambda r=reply: self._settled(r, payload, handler, attempt))
         self._reply = reply
+
+    def _settled(self, reply, payload, handler, attempt):
+        """Pass the reply on, retrying once if the connection had gone stale.
+
+        Qt pools keep-alive HTTPS connections and reconnects transparently when
+        the far end has dropped one - but only for idempotent requests. A POST
+        it will not replay, so signing in over a pooled connection Blue Iris has
+        since closed fails outright with RemoteHostClosedError.
+
+        That is exactly the path taken when an expired session sends us back to
+        log in again, which made the recovery path fail nearly every time: the
+        first login of a session works on a fresh connection, and the one that
+        matters - the retry after the key expires - inherits a dead one.
+        """
+        if (attempt == 1
+                and reply.error() == QNetworkReply.NetworkError.RemoteHostClosedError):
+            reply.deleteLater()
+            print('INFO: Blue Iris login: pooled connection was closed, '
+                  'retrying on a fresh one')
+            self._post(payload, handler, attempt=2)
+            return
+        handler(reply)
 
     def _read(self, reply):
         """Return the parsed body, or None having already reported why not."""
@@ -3040,6 +3125,7 @@ class BlueIrisSession(QtCore.QObject):
                 return
             self._busy = False
             self.key = data.get('session') or ''
+            self._used = time.monotonic()
             print('INFO: signed in to Blue Iris')
             self.ready.emit(self.key)
         except Exception:
