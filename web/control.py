@@ -12,6 +12,7 @@ import subprocess
 import sys
 
 SERVICE = 'piclock.service'
+PANEL = 'piclock-web.service'
 
 # name -> what it does. 'confirm' marks the ones that take the clock off the
 # screen, which the page makes you agree to twice.
@@ -41,8 +42,22 @@ ACTIONS = {
     },
 }
 
+ACTIONS['restart_panel'] = {
+    'label': 'Restart panel',
+    'describe': 'Restart this control panel, to pick up an update. The page '
+                'will be unreachable for a few seconds.',
+    # Scheduled a couple of seconds out through a transient systemd timer,
+    # rather than run directly: restarting the panel from inside the panel
+    # kills the process that still owes the browser a reply, so the request
+    # has to be finished and answered before the restart lands.
+    'argv': ['systemd-run', '--user', '--collect', '--on-active=2',
+             'systemctl', '--user', 'restart', PANEL],
+    'confirm': True,
+    'danger': False,
+}
+
 # Order shown on the page; least destructive first.
-ORDER = ('start', 'restart', 'stop')
+ORDER = ('start', 'restart', 'stop', 'restart_panel')
 
 TIMEOUT_SECONDS = 25
 
@@ -69,6 +84,10 @@ def run(name):
         return False, 'Unknown action.'
     if not available():
         return False, 'systemd user services are not available on this machine.'
+    if action['argv'][0] == 'systemd-run' and shutil.which('systemd-run') is None:
+        return False, ('systemd-run is not installed, so the panel cannot '
+                       'restart itself. Run "systemctl --user restart %s" on '
+                       'the Pi instead.' % PANEL)
 
     try:
         done = subprocess.run(action['argv'], capture_output=True, text=True,
@@ -80,6 +99,9 @@ def run(name):
         return False, 'Could not run systemctl: %s' % exc
 
     if done.returncode == 0:
+        if name == 'restart_panel':
+            return True, ('Restarting the panel. Give it a few seconds, then '
+                          'reload this page.')
         return True, '%s: done.' % action['label']
     # systemctl puts the useful part on stderr.
     detail = (done.stderr or done.stdout or '').strip().splitlines()

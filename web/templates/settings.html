@@ -73,7 +73,9 @@
   <p class="muted">Putting one back also backs up what is there now.</p>
   <div class="actions">
     {% for b in backups[:12] %}
-    <form method="post" action="{{ url_for('settings_restore') }}" data-live
+    {# Not data-live: restoring changes the values on this page, so it should
+       re-render rather than update a message in place. #}
+    <form method="post" action="{{ url_for('settings_restore') }}"
           data-confirm="Replace conf/Config.py with the copy from {{ b.when }}?">
       <input type="hidden" name="csrf" value="{{ csrf_token() }}">
       <input type="hidden" name="backup" value="{{ b.name }}">

@@ -63,7 +63,14 @@
     var button = form.querySelector('button');
     if (button) { button.disabled = true; }
 
-    fetch(form.action, {
+    // getAttribute, never form.action. A form's named controls are exposed as
+    // properties of the form element, so the hidden <input name="action"> in
+    // every action form shadows HTMLFormElement.action - and fetch() then
+    // stringifies that element, posting to /[object HTMLInputElement] and
+    // getting a 404. The attribute is not shadowed.
+    var target = form.getAttribute('action') || window.location.pathname;
+
+    fetch(target, {
       method: 'POST',
       body: new FormData(form),
       headers: { 'Accept': 'application/json' },
@@ -134,12 +141,19 @@
 
   document.addEventListener('submit', function (event) {
     var form = event.target;
-    if (!form.hasAttribute || !form.hasAttribute('data-live')) { return; }
+    if (!form.hasAttribute) { return; }
+
+    // Confirmation is independent of how the form is sent, so a form that
+    // reloads the page can still ask first.
     var question = form.getAttribute('data-confirm');
     if (question && !window.confirm(question)) {
       event.preventDefault();
       return;
     }
+
+    // Only data-live forms are sent by fetch. The rest post normally, which is
+    // what a page whose contents change - the settings - actually wants.
+    if (!form.hasAttribute('data-live')) { return; }
     event.preventDefault();
     submit(form);
   });

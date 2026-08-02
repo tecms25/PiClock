@@ -225,7 +225,7 @@ def create_app(settings=None, secrets_path=SECRETS, audit_db=AUDIT_DB):
         app.logger.info('%s sent command %s -> %s', caller(), name, message)
         return outcome(ok, message)
 
-    def outcome(ok, message):
+    def outcome(ok, message, back=None):
         """Answer a control request.
 
         JSON when the page asked for it, so the browser can update in place
@@ -233,13 +233,18 @@ def create_app(settings=None, secrets_path=SECRETS, audit_db=AUDIT_DB):
         otherwise, which is what a plain form post with no JavaScript gets.
         The state and the log come back with it, so one round trip refreshes
         everything the page shows.
+
+        Every route a data-live form can post to must come through here. One
+        that returns a bare redirect instead leaves the browser following it,
+        reading the HTML page that comes back as if it were JSON, and showing
+        "the panel returned an unexpected reply".
         """
-        if 'application/json' in (request.headers.get('Accept') or ''):
+        if wants_json():
             return jsonify({'ok': ok, 'message': message,
                             'service': status.service_status(),
                             'events': audit.recent(audit_db)})
         flash(message, 'ok' if ok else 'error')
-        return redirect(url_for('control_page'))
+        return redirect(back or url_for('control_page'))
 
     @app.route('/action', methods=['POST'])
     def action():
@@ -272,8 +277,7 @@ def create_app(settings=None, secrets_path=SECRETS, audit_db=AUDIT_DB):
                      'ok' if ok else 'failed',
                      ', '.join(changed) if changed else message)
         app.logger.info('%s edited settings -> %s', caller(), message)
-        flash(message, 'ok' if ok else 'error')
-        return redirect(url_for('settings_page'))
+        return outcome(ok, message, url_for('settings_page'))
 
     @app.route('/settings/restore', methods=['POST'])
     def settings_restore():
@@ -281,8 +285,7 @@ def create_app(settings=None, secrets_path=SECRETS, audit_db=AUDIT_DB):
         ok, message = config_settings.restore(name)
         audit.record(audit_db, caller(), 'restore config',
                      'ok' if ok else 'failed', message)
-        flash(message, 'ok' if ok else 'error')
-        return redirect(url_for('settings_page'))
+        return outcome(ok, message, url_for('settings_page'))
 
     @app.route('/api/status')
     def api_status():
