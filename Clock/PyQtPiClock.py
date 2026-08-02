@@ -2711,22 +2711,45 @@ class CameraPanel(QtWidgets.QFrame):
 
     # -- layout ---------------------------------------------------------------
 
+    def _row_counts(self, count):
+        """How many cameras sit on each row, full rows first."""
+        cols, rows = self.GRID[min(count, self.MAX_TILES)]
+        per_row = []
+        left = count
+        for _ in range(rows):
+            if left <= 0:
+                break
+            per_row.append(min(cols, left))
+            left -= per_row[-1]
+        return per_row
+
     def _relayout(self):
-        """Divide the card between however many cameras are up."""
+        """Divide the card between however many cameras are up.
+
+        A row that isn't full is centred rather than left-aligned, so three
+        cameras read as two above one instead of a 2x2 with a hole in it.
+        """
         count = len(self.tiles)
         if not count:
             return
-        cols, rows = self.GRID[min(count, self.MAX_TILES)]
+        cols = self.GRID[min(count, self.MAX_TILES)][0]
+        per_row = self._row_counts(count)
         inner_w = self._card_w - self._pad * 2
         inner_h = self._card_h - self._pad * 2
         cell_w = (inner_w - self._gap * (cols - 1)) // cols
-        cell_h = (inner_h - self._gap * (rows - 1)) // rows
-        for index, tile in enumerate(self.tiles):
-            col, row = index % cols, index // cols
-            tile.label.setGeometry(self._pad + col * (cell_w + self._gap),
-                                   self._pad + row * (cell_h + self._gap),
-                                   cell_w, cell_h)
-            self._resize_stream(tile, cell_w, inner_w)
+        cell_h = (inner_h - self._gap * (len(per_row) - 1)) // len(per_row)
+
+        index = 0
+        for row, on_this_row in enumerate(per_row):
+            row_w = on_this_row * cell_w + self._gap * (on_this_row - 1)
+            left = self._pad + (inner_w - row_w) // 2
+            top = self._pad + row * (cell_h + self._gap)
+            for column in range(on_this_row):
+                tile = self.tiles[index]
+                index += 1
+                tile.label.setGeometry(left + column * (cell_w + self._gap),
+                                       top, cell_w, cell_h)
+                self._resize_stream(tile, cell_w, inner_w)
 
     def _resize_stream(self, tile, cell_w, inner_w):
         """Ask Blue Iris for a frame that suits the cell.

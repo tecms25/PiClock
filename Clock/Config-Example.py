@@ -26,7 +26,7 @@ cursor_idle_seconds = 3.0 # Seconds of no mouse movement before the cursor is hi
 # control. Percentages are 0 (black) to 100 (normal/full brightness).
 brightness_enabled = 1  # 1 to enable time-based dimming, 0 to always use day_brightness
 day_brightness = 100  # 0-100, brightness percentage during the day
-night_brightness = 30  # 0-100, brightness percentage at night
+night_brightness = 60  # 0-100, brightness percentage at night
 day_start = '07:00'  # 24-hour clock (HH:MM) when day_brightness begins
 night_start = '22:00'  # 24-hour clock (HH:MM) when night_brightness begins
 brightness_transition_minutes = 30  # minutes to gradually fade between day/night brightness; 0 for an instant switch
@@ -71,7 +71,7 @@ blueiris_cameras = []
 # Tapo cameras send text like 'People' or 'IsPet', so ['People'] shows a person
 # at the door and ignores the cat. Empty list means any alert.
 blueiris_triggers = []
-blueiris_show_seconds = 45  # how long the camera stays on screen
+blueiris_show_seconds = 60  # how long the camera stays on screen
 # How many cameras may be on screen at once, 1 to 6. When more alert together
 # the panel divides itself - one camera fills it, two sit side by side, then a
 # 2x2 grid, then 2x3. Each keeps its own countdown and drops off on its own.
