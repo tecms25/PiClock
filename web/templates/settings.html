@@ -17,15 +17,12 @@
   {% for group, rows in groups %}
   <details class="card group" {% if loop.first %}open{% endif %}>
     <summary>{{ group }} <span class="count">{{ rows|length }}</span></summary>
-    <table class="settings">
-      <tbody>
+    <div class="settings">
       {% for row in rows %}
-        <tr class="setting" data-name="{{ row.name }}">
-          <th>
+        <div class="setting" data-name="{{ row.name }}">
+          <div class="setting-row">
             <label for="f-{{ row.name }}">{{ row.name }}</label>
-            {% if row.help %}<span class="muted help">{{ row.help }}</span>{% endif %}
-          </th>
-          <td>
+            <div class="setting-field">
             {% if not row.editable %}
               <span class="muted">{{ row.display }}</span>
               {% if row.locked %}
@@ -55,11 +52,12 @@
               <textarea id="f-{{ row.name }}" name="{{ row.name }}" rows="2"
                         spellcheck="false">{{ row.display }}</textarea>
             {% endif %}
-          </td>
-        </tr>
+            </div>
+          </div>
+          {% if row.help %}<p class="help">{{ row.help }}</p>{% endif %}
+        </div>
       {% endfor %}
-      </tbody>
-    </table>
+    </div>
   </details>
   {% endfor %}
   <div class="card">

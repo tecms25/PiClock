@@ -197,34 +197,57 @@ kbd {
   opacity: .75;
 }
 
-/* Settings form: label and help on the left, the field on the right. Stacks
-   below the width where two columns stop being readable.
+/* Settings form. Deliberately not a table: the help text is a whole comment
+   out of Config.py - some run to several hundred characters - and in a narrow
+   table column they either wrapped into a tall thin ribbon or, because the
+   generic rule above sets th { white-space: nowrap }, refused to wrap at all
+   and ran off the screen. Here the label and field share a row and the help
+   sits underneath at full width, where a long sentence has room to be read. */
+.settings { display: block; }
 
-   display:table and table-layout:fixed override the generic table rule above,
-   which sets display:block so the status page's wide tables can scroll. On a
-   form that was the cause of the layout jumping about: display:block discards
-   the table layout algorithm, so column widths get recomputed from each row's
-   content, and a select or input changing width reflowed the whole page.
-   Fixed layout sizes the columns once, from the header, and content cannot
-   move them afterwards. */
-table.settings {
-  display: table;
-  table-layout: fixed;
-  width: 100%;
-  overflow-x: visible;
+.setting {
+  padding: .75rem 0;
+  border-bottom: 1px solid var(--line);
 }
 
-table.settings th { width: 42%; padding-right: 1.25rem; }
-table.settings th label { color: var(--text); font-weight: 600; margin: 0; }
-table.settings .help { display: block; margin-top: .15rem; line-height: 1.35; }
-table.settings td { width: 58%; }
+.setting:last-child { border-bottom: 0; }
 
-table.settings input[type="text"],
-table.settings input[type="number"],
-table.settings input[type="password"],
-table.settings select,
-table.settings textarea {
+.setting-row {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  flex-wrap: wrap;
+}
+
+.setting-row label {
+  flex: 0 0 15rem;
+  margin: 0;
+  color: var(--text);
+  font-weight: 600;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: .85rem;
+  overflow-wrap: anywhere;
+}
+
+/* min-width:0 lets the field shrink inside the flex row; without it a wide
+   input refuses to narrow and pushes the row off the page. */
+.setting-field { flex: 1 1 16rem; min-width: 0; }
+
+.setting .help {
+  margin: .4rem 0 0;
+  color: var(--muted);
+  font-size: .8rem;
+  line-height: 1.5;
+  overflow-wrap: anywhere;   /* a long URL in a comment must not overflow */
+}
+
+.setting-field input[type="text"],
+.setting-field input[type="number"],
+.setting-field input[type="password"],
+.setting-field select,
+.setting-field textarea {
   width: 100%;
+  max-width: 100%;
   padding: .4rem .5rem;
   background: var(--bg);
   color: var(--text);
@@ -233,7 +256,7 @@ table.settings textarea {
   font: 13px/1.4 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
 }
 
-table.settings textarea { resize: vertical; }
+.setting-field textarea { resize: vertical; }
 
 #settings-filter {
   width: 100%;
@@ -247,9 +270,9 @@ table.settings textarea { resize: vertical; }
 }
 
 @media (max-width: 640px) {
-  table.settings, table.settings tbody, table.settings tr { display: block; }
-  table.settings th, table.settings td { display: block; width: auto; padding-right: 0; }
-  table.settings th { border-bottom: 0; padding-bottom: .2rem; }
+  /* Label above the field rather than beside it - 15rem of label leaves
+     nothing usable for the input on a phone. */
+  .setting-row label { flex: 1 1 100%; }
 }
 
 /* Collapsible groups, so the page opens as a short list of headings instead of
@@ -286,7 +309,7 @@ details.group > summary::before {
 
 details.group[open] > summary::before { transform: rotate(45deg); }
 details.group > summary:hover { color: var(--text); }
-details.group > table { margin: 0 1.15rem 1rem; width: calc(100% - 2.3rem); }
+details.group > .settings { margin: 0 1.15rem 1rem; }
 
 .flash {
   padding: .7rem .9rem;

@@ -108,7 +108,7 @@
         });
         wasOpen = null;
         Array.prototype.forEach.call(
-          document.querySelectorAll('tr.setting'), function (row) {
+          document.querySelectorAll('.setting'), function (row) {
             row.hidden = false;
           });
         return;
@@ -121,7 +121,7 @@
       Array.prototype.forEach.call(groups, function (group) {
         var hits = 0;
         Array.prototype.forEach.call(
-          group.querySelectorAll('tr.setting'), function (row) {
+          group.querySelectorAll('.setting'), function (row) {
             var match = row.textContent.toLowerCase().indexOf(needle) !== -1;
             row.hidden = !match;
             if (match) { hits += 1; }
