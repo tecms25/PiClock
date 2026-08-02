@@ -2389,6 +2389,11 @@ class MjpegStream(QtCore.QObject):
     EOI = b'\xff\xd9'  # JPEG end of image
     MAX_BUFFER = 8 * 1024 * 1024  # more than this buffered means sync is lost
 
+    # Certificates already complained about, as (host, error codes). Shared by
+    # every stream: six tiles opening six connections to one server should say
+    # this once between them, not once each.
+    _reported_tls = set()
+
     def __init__(self, parent=None):
         QtCore.QObject.__init__(self, parent)
         self._reply = None
@@ -2413,9 +2418,24 @@ class MjpegStream(QtCore.QObject):
     def _ignore_ssl_errors(self, reply, errors):
         """Accept a certificate Qt objected to, and say which objection was
         waved through: a stream that works for the wrong reason should not be
-        silent about it."""
-        for error in errors:
-            print('WARNING: camera stream TLS problem ignored: %s' % error.errorString())
+        silent about it.
+
+        Said once per host and set of objections, not once per connection. A
+        self-signed certificate is wrong in the same way every time, while
+        every camera alert opens fresh streams - so repeating it buried the log
+        under identical lines without adding anything.
+        """
+        key = (reply.url().host(),
+               tuple(sorted(error.error().value for error in errors)))
+        if key not in MjpegStream._reported_tls:
+            MjpegStream._reported_tls.add(key)
+            for error in errors:
+                # Qt leaves errorString() empty or "Unknown error" for several
+                # codes its OpenSSL backend raises, which says nothing about
+                # what was waved through - so name the enum as well.
+                print('WARNING: camera stream TLS problem ignored on %s: %s [%s]'
+                      % (key[0], error.errorString() or '(no description)',
+                         error.error().name))
         reply.ignoreSslErrors()
 
     def is_active(self):
