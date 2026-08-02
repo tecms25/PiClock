@@ -396,6 +396,13 @@ defines its own wording keeps working - those values win over the locale file,
 and PiClock prints a note at startup naming what it picked up so you know what
 to move.
 
+`update.py` also checks how the clock starts. If you still launch it from
+`~/.config/autostart`, it offers to switch you to the systemd service described
+below and then removes the shortcut, since leaving both in place starts two
+clocks at login. If the service is already installed and the shortcut is still
+there, it offers to remove just the shortcut. Nothing is removed without a yes,
+and a run with no terminal attached changes nothing.
+
 `update.sh` also keeps translations current. `conf/locale_en-us.py` is the one
 PiClock ships and updates, so when a release adds new wording, `merge_config.py`
 appends the new entries (in English) to every other `conf/locale_*.py` you have,
@@ -675,6 +682,47 @@ startup.sh has a few options:
 Startup also looks for the optional GPIO buttons and only starts the gpio-keys
 driver if it has been built. It also checks whether it is already running, and
 refrains from starting it again if it is.
+
+### Running the clock as a systemd service
+
+`install.sh` offers this and it is the recommended way to start the clock. A
+systemd service restarts the clock if it ever crashes, and gives the web
+control panel something it can restart on demand - neither of which the
+`~/.config/autostart` shortcut can do.
+
+It installs as a **user** service, not a system one, because the clock is a
+fullscreen Qt app that needs the desktop session's display:
+
+```
+mkdir -p ~/.config/systemd/user
+sed "s|__PICLOCK_DIR__|$HOME/PiClock|g" ~/PiClock/systemd/piclock.service \
+    > ~/.config/systemd/user/piclock.service
+systemctl --user daemon-reload
+systemctl --user enable --now piclock
+```
+
+Day to day:
+```
+systemctl --user status piclock     # is it running?
+systemctl --user restart piclock    # restart it
+systemctl --user stop piclock       # stop it (F4 does the same)
+journalctl --user -u piclock -f     # follow its output
+```
+
+**Only one thing may start the clock.** If `~/.config/autostart/PiClock.desktop`
+is still present when the service is enabled, both fire at login and two clocks
+fight over the display. `install.sh` deletes the autostart entry when you choose
+systemd; if you set the service up by hand, remove it yourself:
+```
+rm -f ~/.config/autostart/PiClock.desktop
+```
+The desktop icon in `~/Desktop` is fine to keep - that is a manual launch.
+
+Quitting with F4 exits cleanly (status 0), and `Restart=on-failure` leaves that
+alone, so a deliberate quit stays quit. Start it again with
+`systemctl --user start piclock`. If your display takes a long time to come up
+at boot, change `-n` to `-d 15` in the unit's `ExecStart` to make the clock wait
+15 seconds before starting.
 
 ### Setting the Pi to auto reboot every day
 This is optional but some may want their PiClock to reboot every day.  I do this with mine,

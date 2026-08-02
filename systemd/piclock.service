@@ -1,0 +1,43 @@
+[Unit]
+Description=PiClock
+
+# The clock is a fullscreen Qt application, so it cannot start until the
+# desktop session owns a display. graphical-session.target is what the session
+# manager reaches once that display exists, and PartOf= means the clock goes
+# down again with the session rather than being left behind on a dead display.
+After=graphical-session.target
+PartOf=graphical-session.target
+
+# Never stop retrying. The default rate limit gives up after 5 starts in 10
+# seconds and leaves the unit failed, which on a Pi means a blank screen until
+# somebody notices. A slow display is exactly the case Restart= is here for.
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+WorkingDirectory=__PICLOCK_DIR__
+
+# Quoted because systemd splits ExecStart on whitespace and runs it without a
+# shell: an install path containing a space would otherwise arrive as two
+# separate arguments.
+
+# -n skips startup.sh's 45 second wait for X, because systemd has already
+# ordered us after the session. If the display is still not ready on your Pi,
+# the clock will exit, be restarted below, and settle within a few tries; use
+# -d 15 instead if you would rather it just wait.
+ExecStart=/bin/bash "__PICLOCK_DIR__/startup.sh" -n
+
+# startup.sh defaults DISPLAY to :0 on its own, but a user service does not
+# reliably inherit it from the session, so set it here as well.
+Environment=DISPLAY=:0
+Environment=PICLOCK_DAILY_LOG=1
+
+# Bring the clock back after a crash, an OOM kill, or an X restart. Quitting
+# deliberately with F4 exits 0, which on-failure correctly leaves alone - a
+# quit stays quit. This is also what makes the web panel's restart safe: a
+# start that fails is retried rather than leaving the screen dark.
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=graphical-session.target

@@ -366,20 +366,76 @@ fi
 
 chmod +x startup.sh update.sh PiClock.desktop 2>/dev/null || true
 
+install_autostart_entry() {
+  mkdir -p "$HOME/.config/autostart"
+  AUTOSTART_SHORTCUT="$HOME/.config/autostart/PiClock.desktop"
+  ln -f PiClock.desktop "$AUTOSTART_SHORTCUT" 2>/dev/null || cp -f PiClock.desktop "$AUTOSTART_SHORTCUT"
+  chmod +x "$AUTOSTART_SHORTCUT" 2>/dev/null || true
+  echo "Auto start set up via ~/.config/autostart"
+}
+
+install_systemd_service() {
+  # A user service, not a system one: the clock needs the desktop session's
+  # display, which only the logged-in user's systemd instance is ordered after.
+  UNIT_DIR="$HOME/.config/systemd/user"
+  mkdir -p "$UNIT_DIR"
+  # Substituted in bash rather than with sed, because a path containing & or |
+  # would be mangled by sed's replacement syntax.
+  UNIT_TEXT="$(cat systemd/piclock.service)"
+  printf '%s\n' "${UNIT_TEXT//__PICLOCK_DIR__/$SCRIPT_DIR}" > "$UNIT_DIR/piclock.service"
+
+  systemctl --user daemon-reload
+  if systemctl --user enable --now piclock.service 2>/dev/null; then
+    echo "piclock.service installed and started."
+  else
+    # enable --now fails when run over ssh with no session bus; the unit is
+    # still written and will come up at the next graphical login.
+    systemctl --user enable piclock.service 2>/dev/null || true
+    echo "piclock.service installed. It starts at your next graphical login."
+  fi
+
+  # Both mechanisms firing would launch two clocks fighting over the display,
+  # so the autostart entry goes when systemd takes over. The desktop icon is
+  # left alone - that is a manual launch, not an automatic one.
+  if [ -e "$HOME/.config/autostart/PiClock.desktop" ]; then
+    rm -f "$HOME/.config/autostart/PiClock.desktop"
+    echo "Removed the old ~/.config/autostart entry so only systemd starts the clock."
+  fi
+
+  echo ""
+  echo "  systemctl --user status piclock    # is it running?"
+  echo "  systemctl --user restart piclock   # restart it"
+  echo "  journalctl --user -u piclock -f    # follow its output"
+}
+
 if [ "$OS_NAME" = "Linux" ] && [ -n "$XDG_CURRENT_DESKTOP$DISPLAY" ]; then
   echo ""
   read -r -p "Set up the desktop icon and auto start on login/reboot? [y/N] " REPLY
   if [ "$REPLY" = "y" ] || [ "$REPLY" = "Y" ]; then
-    mkdir -p "$HOME/Desktop" "$HOME/.config/autostart"
+    mkdir -p "$HOME/Desktop"
     DESKTOP_SHORTCUT="$HOME/Desktop/PiClock.desktop"
-    AUTOSTART_SHORTCUT="$HOME/.config/autostart/PiClock.desktop"
 
     # Prefer a hard link (edits to PiClock.desktop then apply everywhere), but
     # that fails when ~/Desktop is on another filesystem, so fall back to a copy.
     ln -f PiClock.desktop "$DESKTOP_SHORTCUT" 2>/dev/null || cp -f PiClock.desktop "$DESKTOP_SHORTCUT"
-    ln -f PiClock.desktop "$AUTOSTART_SHORTCUT" 2>/dev/null || cp -f PiClock.desktop "$AUTOSTART_SHORTCUT"
-    chmod +x "$DESKTOP_SHORTCUT" "$AUTOSTART_SHORTCUT" 2>/dev/null || true
-    echo "PiClock.desktop installed to ~/Desktop and ~/.config/autostart"
+    chmod +x "$DESKTOP_SHORTCUT" 2>/dev/null || true
+    echo "PiClock.desktop installed to ~/Desktop"
+
+    # systemd restarts the clock if it dies and lets the web control panel
+    # restart it on demand, so it is preferred wherever it is available. The
+    # autostart .desktop entry is the fallback for systems without it.
+    if command -v systemctl >/dev/null 2>&1; then
+      echo ""
+      read -r -p "Start the clock with systemd (restarts it if it crashes)? [Y/n] " REPLY
+      if [ "$REPLY" = "n" ] || [ "$REPLY" = "N" ]; then
+        install_autostart_entry
+      else
+        install_systemd_service
+      fi
+    else
+      echo "systemctl not found."
+      install_autostart_entry
+    fi
 
     # GNOME 42+ (Ubuntu 22.04 and newer, Raspberry Pi OS with GNOME) refuses to
     # launch a desktop shortcut until it is both executable and marked trusted;
