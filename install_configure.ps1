@@ -1,6 +1,6 @@
 # Interactive configuration step for install.bat.
-# Prompts for the main PiClock settings and writes them into Clock\Config.py
-# and Clock\ApiKeys.py, which install.bat has already created from the
+# Prompts for the main PiClock settings and writes them into conf\Config.py
+# and conf\ApiKeys.py, which install.bat has already created from the
 # example files.
 
 param([string]$RepoDir = $PSScriptRoot)
@@ -8,8 +8,8 @@ param([string]$RepoDir = $PSScriptRoot)
 $ErrorActionPreference = 'Stop'
 Set-Location $RepoDir
 
-$ConfigPath = Join-Path $RepoDir 'Clock\Config.py'
-$KeysPath = Join-Path $RepoDir 'Clock\ApiKeys.py'
+$ConfigPath = Join-Path $RepoDir 'conf\Config.py'
+$KeysPath = Join-Path $RepoDir 'conf\ApiKeys.py'
 
 function Set-PyLine {
     param([string]$Path, [string]$Pattern, [string]$Replacement)
@@ -83,7 +83,7 @@ if ($mapChoice -eq '2') {
         if ($mapOverlay) {
             Set-PyLine -Path $ConfigPath -Pattern '^map_overlay *=' -Replacement "map_overlay = $(PyStr $mapOverlay)  # optional custom overlay style (labels/roads/borders only); blank disables the overlay"
         }
-        Write-Host "See Clock\Config.py (map_base/map_overlay, radar1-4) to customize further."
+        Write-Host "See conf\Config.py (map_base/map_overlay, radar1-4) to customize further."
     }
 }
 
@@ -181,4 +181,4 @@ $keepAwakeVal = if ($keepAwake) { 1 } else { 0 }
 Set-PyLine -Path $ConfigPath -Pattern '^prevent_screen_sleep *=' -Replacement "prevent_screen_sleep = $keepAwakeVal  # 1 to enable, 0 to disable"
 
 Write-Host ""
-Write-Host "Configuration saved to Clock\Config.py and Clock\ApiKeys.py."
+Write-Host "Configuration saved to conf\Config.py and conf\ApiKeys.py."

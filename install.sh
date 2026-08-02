@@ -33,8 +33,8 @@ py_quote() {
 }
 
 configure_piclock() {
-  local CFG="Clock/Config.py"
-  local KEYS="Clock/ApiKeys.py"
+  local CFG="conf/Config.py"
+  local KEYS="conf/ApiKeys.py"
   local REPLY LAT LON TMAPI MAPCHOICE MBAPI GOOGLEAPI NOAASTREAM SLIDECHOICE SLIDEURL ICLOUDALBUM
   local MAPBASE MAPOVERLAY
   local DIM_ENABLE DAYBRIGHT NIGHTBRIGHT DAYSTART NIGHTSTART TRANSMIN KEEPAWAKE
@@ -99,7 +99,7 @@ configure_piclock() {
       if [ -n "$MAPOVERLAY" ]; then
         set_py_line "$CFG" '^map_overlay *=' "map_overlay = $(py_quote "$MAPOVERLAY")  # optional custom overlay style (labels/roads/borders only); blank disables the overlay"
       fi
-      echo "See Clock/Config.py (map_base/map_overlay, radar1-4) to customize further."
+      echo "See conf/Config.py (map_base/map_overlay, radar1-4) to customize further."
     fi
   fi
 
@@ -228,7 +228,7 @@ configure_piclock() {
   fi
 
   echo ""
-  echo "Configuration saved to Clock/Config.py and Clock/ApiKeys.py."
+  echo "Configuration saved to conf/Config.py and conf/ApiKeys.py."
 }
 
 # Best-effort: disables GNOME's idle screen blanking, auto-lock, and
@@ -334,22 +334,22 @@ fi
 NEW_APIKEYS=0
 NEW_CONFIG=0
 
-if [ ! -f "Clock/ApiKeys.py" ]; then
-  cp Clock/ApiKeys-example.py Clock/ApiKeys.py
+if [ ! -f "conf/ApiKeys.py" ]; then
+  cp conf/ApiKeys-example.py conf/ApiKeys.py
   NEW_APIKEYS=1
   echo ""
-  echo "Created Clock/ApiKeys.py from the example."
+  echo "Created conf/ApiKeys.py from the example."
 else
   echo ""
-  echo "Clock/ApiKeys.py already exists, leaving it alone."
+  echo "conf/ApiKeys.py already exists, leaving it alone."
 fi
 
-if [ ! -f "Clock/Config.py" ]; then
-  cp Clock/Config-Example.py Clock/Config.py
+if [ ! -f "conf/Config.py" ]; then
+  cp conf/Config-Example.py conf/Config.py
   NEW_CONFIG=1
-  echo "Created Clock/Config.py from the example."
+  echo "Created conf/Config.py from the example."
 else
-  echo "Clock/Config.py already exists, leaving it alone."
+  echo "conf/Config.py already exists, leaving it alone."
 fi
 
 echo ""
@@ -359,7 +359,7 @@ if [ "$NEW_APIKEYS" = "1" ] || [ "$NEW_CONFIG" = "1" ]; then
     configure_piclock
   fi
 else
-  read -r -p "Clock/ApiKeys.py and/or Clock/Config.py already exist. Interactively reconfigure them now? [y/N] " REPLY
+  read -r -p "conf/ApiKeys.py and/or conf/Config.py already exist. Interactively reconfigure them now? [y/N] " REPLY
   if [ "$REPLY" = "y" ] || [ "$REPLY" = "Y" ]; then
     configure_piclock
   fi
@@ -405,7 +405,7 @@ fi
 echo ""
 echo "=== Install complete ==="
 echo "Next steps:"
-echo "  1. Double check Clock/ApiKeys.py and Clock/Config.py have what you expect."
+echo "  1. Double check conf/ApiKeys.py and conf/Config.py have what you expect."
 echo "     (Rerun this script if you skipped the interactive configuration.)"
 echo "  2. Test it: bash startup.sh -n -s"
 echo ""

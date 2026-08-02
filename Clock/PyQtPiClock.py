@@ -29,8 +29,94 @@ from PyQt6.QtNetwork import QNetworkRequest
 from tzfpy import get_tz
 
 sys.dont_write_bytecode = True
-from GoogleMercatorProjection import get_corners, get_point, get_tile_xy, LatLng
-import ApiKeys
+
+# Settings, keys and wording all live in conf/, one directory up from the
+# script, so the Clock directory holds only code.
+REPO_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+CONF_DIR = os.path.join(REPO_DIR, 'conf')
+LOG_DIR = os.path.join(REPO_DIR, 'logs')
+if CONF_DIR not in sys.path:
+    sys.path.insert(0, CONF_DIR)
+
+
+def _load_module_file(path, name):
+    """Import one file by path, with no reliance on sys.path."""
+    import importlib.util
+    spec = importlib.util.spec_from_file_location(name, path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def _load_from_conf(module_name):
+    """Load a module out of conf/ by path rather than with `import`.
+
+    A plain `import ApiKeys` here would work only while it sits below the
+    sys.path line above - and any tool that sorts imports moves it to the top
+    of the file, where conf/ is not on the path yet and the clock stops
+    starting with ModuleNotFoundError. Loading by path has no such ordering to
+    get wrong. (conf/ stays on sys.path regardless, because Config.py does its
+    own `from GoogleMercatorProjection import LatLng`.)
+    """
+    path = os.path.join(CONF_DIR, module_name + '.py')
+    if not os.path.isfile(path):
+        raise SystemExit('ERROR: %s is missing. Run install.sh, or update.py '
+                         'if you are upgrading from a layout with it in Clock/.'
+                         % os.path.join('conf', module_name + '.py'))
+    return _load_module_file(path, module_name)
+
+
+ApiKeys = _load_from_conf('ApiKeys')
+_projection = _load_from_conf('GoogleMercatorProjection')
+get_corners = _projection.get_corners
+get_point = _projection.get_point
+get_tile_xy = _projection.get_tile_xy
+LatLng = _projection.LatLng
+
+
+def _load_locale_file(path, name):
+    return _load_module_file(path, name)
+
+
+def load_locale(code):
+    """Load conf/locale_<code>.py, filling any gaps from English.
+
+    The file name carries a hyphen, which no import statement will accept, so
+    it is loaded by path. That is what lets the file be named after the
+    language it holds rather than after a Python identifier.
+
+    A translation written against an older PiClock will not have the newer
+    wording. Those entries are taken from English instead: showing one label in
+    the wrong language beats an AttributeError in a Qt slot, which takes the
+    whole clock down. Run merge_config.py to add them properly.
+    """
+    english_path = os.path.join(CONF_DIR, 'locale_en-us.py')
+    if not os.path.isfile(english_path):
+        raise SystemExit('ERROR: conf/locale_en-us.py is missing; PiClock cannot start')
+    english = _load_locale_file(english_path, 'piclock_locale_en')
+    if code == 'en-us':
+        return english
+
+    path = os.path.join(CONF_DIR, 'locale_%s.py' % code)
+    if not os.path.isfile(path):
+        print('WARNING: no conf/locale_%s.py, using English' % code)
+        return english
+
+    module = _load_locale_file(path, 'piclock_locale')
+    missing = [name for name in dir(english)
+               if not name.startswith('_') and not hasattr(module, name)]
+    if missing:
+        shown = sorted(missing)
+        if len(shown) > 6:
+            shown = shown[:6] + ['and %d more' % (len(missing) - 6)]
+        print('WARNING: conf/locale_%s.py is missing %d entr%s (%s). English is '
+              'shown for those; run "python3 merge_config.py" to add them.'
+              % (code, len(missing), 'y' if len(missing) == 1 else 'ies',
+                 ', '.join(shown)))
+        for name in missing:
+            setattr(module, name, getattr(english, name))
+    return module
+
 
 
 def _qt_message_handler(msg_type, context, message):
@@ -236,8 +322,9 @@ def _setup_daily_log_if_enabled():
     if os.environ.get("PICLOCK_DAILY_LOG", "").strip() not in ("1", "true", "True", "yes", "YES"):
         return
     try:
-        # Expect to be run from Clock/ (startup.sh does cd Clock)
-        log_file = os.path.join(os.getcwd(), "PyQtPiClock.1.log")
+        # Logs live in logs/ at the repo root, not beside the script, and the
+        # path is derived from this file so it does not depend on the cwd.
+        log_file = os.path.join(LOG_DIR, "PyQtPiClock.1.log")
         logger = _DailyRotatingLineLogger(log_file, keep=7, tee_to=None)
         sys.stdout = logger
         sys.stderr = logger
@@ -523,16 +610,18 @@ def tick():
 
     now = datetime.datetime.now(tz=tzlocal.get_localzone())
     apply_brightness(get_brightness_percent(now))
-    timestr = Config.digitalformat.format(now)
-    if Config.digitalformat.find('%I') > -1:
+    clockformat = getattr(Config, 'digitalformat', None) or Locale.LClockFormat
+    timestr = clockformat.format(now)
+    if clockformat.find('%I') > -1:
         if timestr[0] == '0':
             timestr = timestr[1:99]
     if lasttimestr != timestr:
         clockface.setText(timestr.lower())
     lasttimestr = timestr
 
-    dy = Config.digitalformat2.format(now)
-    if Config.digitalformat2.find('%I') > -1:
+    clockformat2 = getattr(Config, 'digitalformat2', None) or Locale.LClockFormatSeconds
+    dy = clockformat2.format(now)
+    if clockformat2.find('%I') > -1:
         if dy[0] == '0':
             dy = dy[1:99]
     if dy != pdy:
@@ -549,28 +638,23 @@ def tick():
     if now.day != lastday:
         lastday = now.day
         # date
-        sup = 'th'
-        if now.day == 1 or now.day == 21 or now.day == 31:
-            sup = 'st'
-        if now.day == 2 or now.day == 22:
-            sup = 'nd'
-        if now.day == 3 or now.day == 23:
-            sup = 'rd'
-        if Config.DateLocale != '':
+        sup = Locale.LOrdinal.get(now.day, Locale.LOrdinalDefault)
+        if Locale.DateLocale != '':
+            # A locale supplies its own day naming; ordinals would be wrong.
             sup = ''
-        ds = '{0:%A %B} {0.day}<sup>{1}</sup> {0.year}'.format(now, sup)
-        ds2 = '{0:%a %b} {0.day}<sup>{1}</sup> {0.year}'.format(now, sup)
+        ds = Locale.LDateFormat.format(now, sup)
+        ds2 = Locale.LDateFormatShort.format(now, sup)
         datex.setText(ds)
         datex2.setText(ds2)
         dt = datetime.datetime.now(tz=tzlocal.get_localzone())
         sunrise = sun.sunrise(dt)
         sunset = sun.sunset(dt)
         bottomtext = ''
-        bottomtext += (Config.LSunRise +
-                       '{0:%-I:%M %p}'.format(sunrise) +
-                       Config.LSet +
-                       '{0:%-I:%M %p}'.format(sunset))
-        bottomtext += (Config.LMoonPhase + phase(moon_phase()))
+        bottomtext += (Locale.LSunRise +
+                       Locale.LSunTimeFormat.format(sunrise) +
+                       Locale.LSet +
+                       Locale.LSunTimeFormat.format(sunset))
+        bottomtext += (Locale.LMoonPhase + phase(moon_phase()))
         bottom.setText(bottomtext)
 
 
@@ -623,19 +707,19 @@ def tempfinished():
     if tempdata['temp'] == '':
         return
     if Config.metric:
-        s = Config.LInsideTemp + '%.1f' % tempf2tempc(float(tempdata['temp'])) + u'°C'
+        s = Locale.LInsideTemp + '%.1f' % tempf2tempc(float(tempdata['temp'])) + Locale.LDegC
         if tempdata['temps']:
             if len(tempdata['temps']) > 1:
                 s = ''
                 for tk in tempdata['temps']:
-                    s += ' ' + tk + ': ' + '%.1f' % tempf2tempc(float(tempdata['temps'][tk])) + u'°C'
+                    s += ' ' + tk + ': ' + '%.1f' % tempf2tempc(float(tempdata['temps'][tk])) + Locale.LDegC
     else:
-        s = Config.LInsideTemp + tempdata['temp'] + u'°F'
+        s = Locale.LInsideTemp + tempdata['temp'] + Locale.LDegF
         if tempdata['temps']:
             if len(tempdata['temps']) > 1:
                 s = ''
                 for tk in tempdata['temps']:
-                    s += ' ' + tk + ': ' + tempdata['temps'][tk] + u'°F'
+                    s += ' ' + tk + ': ' + tempdata['temps'][tk] + Locale.LDegF
     temp.setText(s)
 
 
@@ -672,45 +756,34 @@ def mm2inches(f):
 
 
 def phase(f):
-    pp = Config.Lmoon1  # 'New Moon'
+    pp = Locale.Lmoon1  # 'New Moon'
     if f > 0.9375:
-        pp = Config.Lmoon1  # 'New Moon'
+        pp = Locale.Lmoon1  # 'New Moon'
     elif f > 0.8125:
-        pp = Config.Lmoon8  # 'Waning Crescent'
+        pp = Locale.Lmoon8  # 'Waning Crescent'
     elif f > 0.6875:
-        pp = Config.Lmoon7  # 'Third Quarter'
+        pp = Locale.Lmoon7  # 'Third Quarter'
     elif f > 0.5625:
-        pp = Config.Lmoon6  # 'Waning Gibbous'
+        pp = Locale.Lmoon6  # 'Waning Gibbous'
     elif f > 0.4375:
-        pp = Config.Lmoon5  # 'Full Moon'
+        pp = Locale.Lmoon5  # 'Full Moon'
     elif f > 0.3125:
-        pp = Config.Lmoon4  # 'Waxing Gibbous'
+        pp = Locale.Lmoon4  # 'Waxing Gibbous'
     elif f > 0.1875:
-        pp = Config.Lmoon3  # 'First Quarter'
+        pp = Locale.Lmoon3  # 'First Quarter'
     elif f > 0.0625:
-        pp = Config.Lmoon2  # 'Waxing Crescent'
+        pp = Locale.Lmoon2  # 'Waxing Crescent'
     return pp
 
 
+def compass_index(degrees):
+    """0-7 for N, NE, E, SE, S, SW, W, NW - the index into Locale.Lcompass
+    and COMPASS_ARROWS."""
+    return int(((float(degrees) + 22.5) % 360) / 45)
+
+
 def bearing(f):
-    wd = 'N'
-    if f > 22.5:
-        wd = 'NE'
-    if f > 67.5:
-        wd = 'E'
-    if f > 112.5:
-        wd = 'SE'
-    if f > 157.5:
-        wd = 'S'
-    if f > 202.5:
-        wd = 'SW'
-    if f > 247.5:
-        wd = 'W'
-    if f > 292.5:
-        wd = 'NW'
-    if f > 337.5:
-        wd = 'N'
-    return wd
+    return Locale.Lcompass[compass_index(f)]
 
 
 def gettemp():
@@ -723,35 +796,6 @@ def gettemp():
     tempreply = manager.get(r)
     tempreply.finished.connect(tempfinished)
 
-
-# Tomorrow.io weather codes to display text. Overridden by Config.Ltm_code_map
-# (for other languages) on the first getallwx() call.
-tm_code_map = {
-    0: 'Unknown',
-    1000: 'Clear',
-    1100: 'Mostly Clear',
-    1101: 'Partly Cloudy',
-    1102: 'Mostly Cloudy',
-    1001: 'Cloudy',
-    2000: 'Fog',
-    2100: 'Light Fog',
-    4000: 'Drizzle',
-    4001: 'Rain',
-    4200: 'Light Rain',
-    4201: 'Heavy Rain',
-    5000: 'Snow',
-    5001: 'Flurries',
-    5100: 'Light Snow',
-    5101: 'Heavy Snow',
-    6000: 'Freezing Drizzle',
-    6001: 'Freezing Rain',
-    6200: 'Light Freezing Rain',
-    6201: 'Heavy Freezing Rain',
-    7000: 'Ice Pellets',
-    7101: 'Heavy Ice Pellets',
-    7102: 'Light Ice Pellets',
-    8000: 'Thunderstorm'
-}
 
 tm_code_icons = {
     0: 'Unknown',
@@ -822,44 +866,44 @@ def wxfinished_tm_current(data=None):
         wxicon.height(),
         Qt.AspectRatioMode.IgnoreAspectRatio,
         Qt.TransformationMode.SmoothTransformation))
-    wxdesc.setText(tm_code_map[f['values']['weatherCode']])
-    wxdesc2.setText(tm_code_map[f['values']['weatherCode']])
+    wxdesc.setText(Locale.Ltm_code_map[f['values']['weatherCode']])
+    wxdesc2.setText(Locale.Ltm_code_map[f['values']['weatherCode']])
 
     if Config.wind_degrees:
-        wd = str(f['values']['windDirection']) + u'°'
+        wd = str(f['values']['windDirection']) + Locale.LDegreeSign
     else:
         wd = bearing(f['values']['windDirection'])
 
     if Config.metric:
-        temper.setText('%.1f' % (tempf2tempc(f['values']['temperature'])) + u'°C')
-        temper2.setText('%.1f' % (tempf2tempc(f['values']['temperature'])) + u'°C')
-        wind.setText(Config.LWind + wd + ' ' +
-                     '%.1f' % (mph2kph(f['values']['windSpeed'])) + ' km/h ·' +
-                     Config.Lgusting +
-                     '%.1f' % (mph2kph(f['values']['windGust'])) + ' km/h')
-        feelslike.setText(Config.LFeelslike +
-                          '%.1f' % (tempf2tempc(f['values']['temperatureApparent'])) + u'°C')
+        temper.setText('%.1f' % (tempf2tempc(f['values']['temperature'])) + Locale.LDegC)
+        temper2.setText('%.1f' % (tempf2tempc(f['values']['temperature'])) + Locale.LDegC)
+        wind.setText(Locale.LWind + wd + ' ' +
+                     '%.1f' % (mph2kph(f['values']['windSpeed'])) + Locale.Lkmh + ' ·' +
+                     Locale.Lgusting +
+                     '%.1f' % (mph2kph(f['values']['windGust'])) + Locale.Lkmh)
+        feelslike.setText(Locale.LFeelslike +
+                          '%.1f' % (tempf2tempc(f['values']['temperatureApparent'])) + Locale.LDegC)
     else:
-        temper.setText('%.1f' % (f['values']['temperature']) + u'°F')
-        temper2.setText('%.1f' % (f['values']['temperature']) + u'°F')
-        wind.setText(Config.LWind +
+        temper.setText('%.1f' % (f['values']['temperature']) + Locale.LDegF)
+        temper2.setText('%.1f' % (f['values']['temperature']) + Locale.LDegF)
+        wind.setText(Locale.LWind +
                      wd + ' ' +
-                     '%.1f' % (f['values']['windSpeed']) + ' mph ·' +
-                     Config.Lgusting +
-                     '%.1f' % (f['values']['windGust']) + ' mph')
-        feelslike.setText(Config.LFeelslike +
-                          '%.1f' % (f['values']['temperatureApparent']) + u'°F')
+                     '%.1f' % (f['values']['windSpeed']) + Locale.Lmph + ' ·' +
+                     Locale.Lgusting +
+                     '%.1f' % (f['values']['windGust']) + Locale.Lmph)
+        feelslike.setText(Locale.LFeelslike +
+                          '%.1f' % (f['values']['temperatureApparent']) + Locale.LDegF)
 
     press_inhg = f['values']['pressureSeaLevel']
     if Config.pressure_mbar:
-        pressure_str = Config.LPressure + '%.1f' % inhg2mbar(press_inhg) + 'mbar'
+        pressure_str = Locale.LPressure + '%.1f' % inhg2mbar(press_inhg) + Locale.Lmbar
     else:
-        pressure_str = Config.LPressure + '%.2f' % press_inhg + ' inHg'
+        pressure_str = Locale.LPressure + '%.2f' % press_inhg + Locale.LinHg
     # Sets the label text and feeds the raw reading into the pressure trend history.
     set_pressure_label(pressure_str, press_inhg)
 
-    humidity.setText(Config.LHumidity + '%.0f%%' % (f['values']['humidity']))
-    wdate.setText('Last Updated: {0:%-I:%M %p}'.format(dt))
+    humidity.setText(Locale.LHumidity + '%.0f' % (f['values']['humidity']) + Locale.LPercent)
+    wdate.setText(Locale.LLastUpdated.format(dt))
 
 
 def wxfinished_tm_hourly(data=None):
@@ -916,7 +960,7 @@ def wxfinished_tm_hourly(data=None):
             Qt.TransformationMode.SmoothTransformation))
         wx = fl.findChild(QtWidgets.QLabel, 'wx')
         day = fl.findChild(QtWidgets.QLabel, 'day')
-        day.setText('{0:%A %-I:%M %p} '.format(dt))
+        day.setText(Locale.LHourlyFormat.format(dt))
         s = ''
         pop = float(f['values']['precipitationProbability'])
         ptype = float(f['values']['precipitationType'])
@@ -924,50 +968,50 @@ def wxfinished_tm_hourly(data=None):
         raccum = float(f['values']['rainAccumulationAvg'])
 
         if Config.metric:
-            s += '%.0f' % tempf2tempc(f['values']['temperature']) + u'°C '
+            s += '%.0f' % tempf2tempc(f['values']['temperature']) + Locale.LDegC + ' '
         else:
-            s += '%.0f' % (f['values']['temperature']) + u'°F '
+            s += '%.0f' % (f['values']['temperature']) + Locale.LDegF + ' '
 
         # Precipitation expected but too little to accumulate: probability only.
         if pop >= 1 and ptype > 0:
             if ptype == 1 and raccum < 0.10 and saccum < 0.10:
-                s += Config.LRain + '%.0f' % pop + '%'
+                s += Locale.LRain + '%.0f' % pop + Locale.LPercent
             elif ptype == 2 and saccum < 0.10 and raccum < 0.10:
-                s += Config.LSnow + '%.0f' % pop + '%'
+                s += Locale.LSnow + '%.0f' % pop + Locale.LPercent
 
         # Enough to accumulate: probability plus the projected amount.
         if Config.metric:
             if ptype == 2:
                 if saccum >= 0.10:
-                    s += Config.LSnow + '%.0f' % pop + '% ' + '\n' + 'Accumulation: ' + '%.2f' % inches2mm(saccum) + ' mm'
+                    s += Locale.LSnow + '%.0f' % pop + Locale.LPercent + ' ' + '\n' + Locale.LAccumulation + '%.2f' % inches2mm(saccum) + Locale.Lmm
                 else:
                     if raccum >= 0.10:
-                        s += Config.LRain + '%.0f' % pop + '% ' + '\n' + 'Accumulation: ' + '%.2f' % inches2mm(raccum) + ' mm'
+                        s += Locale.LRain + '%.0f' % pop + Locale.LPercent + ' ' + '\n' + Locale.LAccumulation + '%.2f' % inches2mm(raccum) + Locale.Lmm
             else:
                 if raccum >= 0.10:
-                    s += Config.LRain + '%.0f' % pop + '% ' + '\n' + 'Accumulation: ' + '%.2f' % inches2mm(raccum) + ' mm'
+                    s += Locale.LRain + '%.0f' % pop + Locale.LPercent + ' ' + '\n' + Locale.LAccumulation + '%.2f' % inches2mm(raccum) + Locale.Lmm
                 else:
                     if saccum >= 0.10:
-                        s += Config.LSnow + '%.0f' % pop + '% ' + '\n' + 'Accumulation: ' + '%.2f' % inches2mm(saccum) + ' mm'
+                        s += Locale.LSnow + '%.0f' % pop + Locale.LPercent + ' ' + '\n' + Locale.LAccumulation + '%.2f' % inches2mm(saccum) + Locale.Lmm
         else:
             if ptype == 2:
                 if saccum >= 0.10:
-                    s += Config.LSnow + '%.0f' % pop + '% ' + '\n' + 'Accumulation: ' + '%.2f' % saccum + ' in'
+                    s += Locale.LSnow + '%.0f' % pop + Locale.LPercent + ' ' + '\n' + Locale.LAccumulation + '%.2f' % saccum + Locale.Lin
                 else:
                     if raccum >= 0.10:
-                        s += Config.LRain + '%.0f' % pop + '% ' + '\n' + 'Accumulation: ' + '%.2f' % raccum + ' in'
+                        s += Locale.LRain + '%.0f' % pop + Locale.LPercent + ' ' + '\n' + Locale.LAccumulation + '%.2f' % raccum + Locale.Lin
             else:
                 if raccum >= 0.10:
-                    s += Config.LRain + '%.0f' % pop + '% ' + '\n' + 'Accumulation: ' + '%.2f' % raccum + ' in'
+                    s += Locale.LRain + '%.0f' % pop + Locale.LPercent + ' ' + '\n' + Locale.LAccumulation + '%.2f' % raccum + Locale.Lin
                 else:
                     if saccum >= 0.10:
-                        s += Config.LSnow + '%.0f' % pop + '% ' + '\n' + 'Accumulation: ' + '%.2f' % saccum + ' in'
+                        s += Locale.LSnow + '%.0f' % pop + Locale.LPercent + ' ' + '\n' + Locale.LAccumulation + '%.2f' % saccum + Locale.Lin
 
         wx.setStyleSheet('#wx { font-size: ' + str(int(17 * xscale * Config.fontmult)) + 'px; }')
         if pop >= 1 and (saccum >= 0.10 or raccum >= 0.10):
-            wx.setText(tm_code_map[f['values']['weatherCode']] + '\n' + s)
+            wx.setText(Locale.Ltm_code_map[f['values']['weatherCode']] + '\n' + s)
         else:
-            wx.setText('\n' + tm_code_map[f['values']['weatherCode']] + '\n' + s)
+            wx.setText('\n' + Locale.Ltm_code_map[f['values']['weatherCode']] + '\n' + s)
 
 
 def wxfinished_tm_daily(data=None):
@@ -1011,7 +1055,7 @@ def wxfinished_tm_daily(data=None):
                 Qt.TransformationMode.SmoothTransformation))
             wx = fl.findChild(QtWidgets.QLabel, 'wx')
             day = fl.findChild(QtWidgets.QLabel, 'day')
-            day.setText('{0:%A %m/%d} '.format(dateutil.parser.parse(f['startTime'])
+            day.setText(Locale.LDailyFormat.format(dateutil.parser.parse(f['startTime'])
                                               .astimezone(tzlocal.get_localzone())))
             s = ''
             pop = float(f['values']['precipitationProbability'])
@@ -1021,109 +1065,111 @@ def wxfinished_tm_daily(data=None):
 
             if Config.metric:
                 s += '%.0f' % tempf2tempc(f['values']['temperatureMax']) + '/' + \
-                     '%.0f' % tempf2tempc(f['values']['temperatureMin']) + u'°C '
+                     '%.0f' % tempf2tempc(f['values']['temperatureMin']) + Locale.LDegC + ' '
             else:
                 s += '%.0f' % f['values']['temperatureMax'] + '/' + \
-                     '%.0f' % f['values']['temperatureMin'] + u'°F '
+                     '%.0f' % f['values']['temperatureMin'] + Locale.LDegF + ' '
 
             # Precipitation expected but too little to accumulate: probability only.
             if pop >= 1 and ptype > 0:
                 if ptype == 1 and raccum < 0.10 and saccum < 0.10:
-                    s += Config.LRain + '%.0f' % pop + '%'
+                    s += Locale.LRain + '%.0f' % pop + Locale.LPercent
                 elif ptype == 2 and saccum < 0.10 and raccum < 0.10:
-                    s += Config.LSnow + '%.0f' % pop + '%'
+                    s += Locale.LSnow + '%.0f' % pop + Locale.LPercent
 
             # Enough to accumulate: probability plus the projected amount.
             if Config.metric:
                 if ptype == 2:
                     if saccum >= 0.10:
-                        s += Config.LSnow + '%.0f' % pop + '% ' + '\n' + 'Accumulation: ' + '%.2f' % inches2mm(saccum) + ' mm'
+                        s += Locale.LSnow + '%.0f' % pop + Locale.LPercent + ' ' + '\n' + Locale.LAccumulation + '%.2f' % inches2mm(saccum) + Locale.Lmm
                     else:
                         if raccum >= 0.10:
-                            s += Config.LRain + '%.0f' % pop + '% ' + '\n' + 'Accumulation: ' + '%.2f' % inches2mm(raccum) + ' mm'
+                            s += Locale.LRain + '%.0f' % pop + Locale.LPercent + ' ' + '\n' + Locale.LAccumulation + '%.2f' % inches2mm(raccum) + Locale.Lmm
                 else:
                     if raccum >= 0.10:
-                        s += Config.LRain + '%.0f' % pop + '% ' + '\n' + 'Accumulation: ' + '%.2f' % inches2mm(raccum) + ' mm'
+                        s += Locale.LRain + '%.0f' % pop + Locale.LPercent + ' ' + '\n' + Locale.LAccumulation + '%.2f' % inches2mm(raccum) + Locale.Lmm
                     else:
                         if saccum >= 0.10:
-                            s += Config.LSnow + '%.0f' % pop + '% ' + '\n' + 'Accumulation: ' + '%.2f' % inches2mm(saccum) + ' mm'
+                            s += Locale.LSnow + '%.0f' % pop + Locale.LPercent + ' ' + '\n' + Locale.LAccumulation + '%.2f' % inches2mm(saccum) + Locale.Lmm
             else:
                 if ptype == 2:
                     if saccum >= 0.10:
-                        s += Config.LSnow + '%.0f' % pop + '% ' + '\n' + 'Accumulation: ' + '%.2f' % saccum + ' in'
+                        s += Locale.LSnow + '%.0f' % pop + Locale.LPercent + ' ' + '\n' + Locale.LAccumulation + '%.2f' % saccum + Locale.Lin
                     else:
                         if raccum >= 0.10:
-                            s += Config.LRain + '%.0f' % pop + '% ' + '\n' + 'Accumulation: ' + '%.2f' % raccum + ' in'
+                            s += Locale.LRain + '%.0f' % pop + Locale.LPercent + ' ' + '\n' + Locale.LAccumulation + '%.2f' % raccum + Locale.Lin
                 else:
                     if raccum >= 0.10:
-                        s += Config.LRain + '%.0f' % pop + '% ' + '\n' + 'Accumulation: ' + '%.2f' % raccum + ' in'
+                        s += Locale.LRain + '%.0f' % pop + Locale.LPercent + ' ' + '\n' + Locale.LAccumulation + '%.2f' % raccum + Locale.Lin
                     else:
                         if saccum >= 0.10:
-                            s += Config.LSnow + '%.0f' % pop + '% ' + '\n' + 'Accumulation: ' + '%.2f' % saccum + ' in'
+                            s += Locale.LSnow + '%.0f' % pop + Locale.LPercent + ' ' + '\n' + Locale.LAccumulation + '%.2f' % saccum + Locale.Lin
 
             wx.setStyleSheet('#wx { font-size: ' + str(int(17 * xscale * Config.fontmult)) + 'px; }')
             if pop >= 1 and (saccum >= 0.10 or raccum >= 0.10):
-                wx.setText(tm_code_map[f['values']['weatherCode']] + '\n' + s)
+                wx.setText(Locale.Ltm_code_map[f['values']['weatherCode']] + '\n' + s)
             else:
-                wx.setText('\n' + tm_code_map[f['values']['weatherCode']] + '\n' + s)
+                wx.setText('\n' + Locale.Ltm_code_map[f['values']['weatherCode']] + '\n' + s)
         except IndexError:
             # Fewer forecast intervals than slots; leave the remaining ones as-is.
             print('WARNING:', traceback.format_exc())
 
 
+# METAR decoding. Field 4 is an id into Locale.Lmetar, so the wording lives
+# in conf/locale_*.py while the codes and icons stay here.
 metar_cond = [
-    ('CLR', '', '', 'Clear', 'clear-day', 0),
-    ('NSC', '', '', 'Clear', 'clear-day', 0),
-    ('SKC', '', '', 'Clear', 'clear-day', 0),
-    ('FEW', '', '', 'Few Clouds', 'partly-cloudy-day', 1),
-    ('NCD', '', '', 'Clear', 'clear-day', 0),
-    ('SCT', '', '', 'Scattered Clouds', 'partly-cloudy-day', 2),
-    ('BKN', '', '', 'Mostly Cloudy', 'partly-cloudy-day', 3),
-    ('OVC', '', '', 'Cloudy', 'cloudy', 4),
+    ('CLR', '', '', 'clear', 'clear-day', 0),
+    ('NSC', '', '', 'clear', 'clear-day', 0),
+    ('SKC', '', '', 'clear', 'clear-day', 0),
+    ('FEW', '', '', 'few_clouds', 'partly-cloudy-day', 1),
+    ('NCD', '', '', 'clear', 'clear-day', 0),
+    ('SCT', '', '', 'scattered_clouds', 'partly-cloudy-day', 2),
+    ('BKN', '', '', 'mostly_cloudy', 'partly-cloudy-day', 3),
+    ('OVC', '', '', 'cloudy', 'cloudy', 4),
 
     ('///', '', '', '', 'cloudy', 0),
     ('UP', '', '', '', 'cloudy', 0),
     ('VV', '', '', '', 'cloudy', 0),
     ('//', '', '', '', 'cloudy', 0),
 
-    ('DZ', '', '', 'Drizzle', 'rain', 10),
+    ('DZ', '', '', 'drizzle', 'rain', 10),
 
-    ('RA', 'FZ', '+', 'Heavy Freezing Rain', 'sleet', 11),
-    ('RA', 'FZ', '-', 'Light Freezing Rain', 'sleet', 11),
-    ('RA', 'SH', '+', 'Heavy Rain Showers', 'sleet', 11),
-    ('RA', 'SH', '-', 'Light Rain Showers', 'rain', 11),
-    ('RA', 'BL', '+', 'Heavy Blowing Rain', 'rain', 11),
-    ('RA', 'BL', '-', 'Light Blowing Rain', 'rain', 11),
-    ('RA', 'FZ', '', 'Freezing Rain', 'sleet', 11),
-    ('RA', 'SH', '', 'Rain Showers', 'rain', 11),
-    ('RA', 'BL', '', 'Blowing Rain', 'rain', 11),
-    ('RA', '', '+', 'Heavy Rain', 'rain', 11),
-    ('RA', '', '-', 'Light Rain', 'rain', 11),
-    ('RA', '', '', 'Rain', 'rain', 11),
+    ('RA', 'FZ', '+', 'heavy_freezing_rain', 'sleet', 11),
+    ('RA', 'FZ', '-', 'light_freezing_rain', 'sleet', 11),
+    ('RA', 'SH', '+', 'heavy_rain_showers', 'sleet', 11),
+    ('RA', 'SH', '-', 'light_rain_showers', 'rain', 11),
+    ('RA', 'BL', '+', 'heavy_blowing_rain', 'rain', 11),
+    ('RA', 'BL', '-', 'light_blowing_rain', 'rain', 11),
+    ('RA', 'FZ', '', 'freezing_rain', 'sleet', 11),
+    ('RA', 'SH', '', 'rain_showers', 'rain', 11),
+    ('RA', 'BL', '', 'blowing_rain', 'rain', 11),
+    ('RA', '', '+', 'heavy_rain', 'rain', 11),
+    ('RA', '', '-', 'light_rain', 'rain', 11),
+    ('RA', '', '', 'rain', 'rain', 11),
 
-    ('SN', 'FZ', '+', 'Heavy Freezing Snow', 'snow', 12),
-    ('SN', 'FZ', '-', 'Light Freezing Snow', 'snow', 12),
-    ('SN', 'SH', '+', 'Heavy Snow Showers', 'snow', 12),
-    ('SN', 'SH', '-', 'Light Snow Showers', 'snow', 12),
-    ('SN', 'BL', '+', 'Heavy Blowing Snow', 'snow', 12),
-    ('SN', 'BL', '-', 'Light Blowing Snow', 'snow', 12),
-    ('SN', 'FZ', '', 'Freezing Snow', 'snow', 12),
-    ('SN', 'SH', '', 'Snow Showers', 'snow', 12),
-    ('SN', 'BL', '', 'Blowing Snow', 'snow', 12),
-    ('SN', '', '+', 'Heavy Snow', 'snow', 12),
-    ('SN', '', '-', 'Light Snow', 'snow', 12),
-    ('SN', '', '', 'Rain', 'snow', 12),
+    ('SN', 'FZ', '+', 'heavy_freezing_snow', 'snow', 12),
+    ('SN', 'FZ', '-', 'light_freezing_snow', 'snow', 12),
+    ('SN', 'SH', '+', 'heavy_snow_showers', 'snow', 12),
+    ('SN', 'SH', '-', 'light_snow_showers', 'snow', 12),
+    ('SN', 'BL', '+', 'heavy_blowing_snow', 'snow', 12),
+    ('SN', 'BL', '-', 'light_blowing_snow', 'snow', 12),
+    ('SN', 'FZ', '', 'freezing_snow', 'snow', 12),
+    ('SN', 'SH', '', 'snow_showers', 'snow', 12),
+    ('SN', 'BL', '', 'blowing_snow', 'snow', 12),
+    ('SN', '', '+', 'heavy_snow', 'snow', 12),
+    ('SN', '', '-', 'light_snow', 'snow', 12),
+    ('SN', '', '', 'rain', 'snow', 12),
 
-    ('SG', 'BL', '', 'Blowing Snow', 'snow', 12),
-    ('SG', '', '', 'Snow', 'snow', 12),
-    ('GS', 'BL', '', 'Blowing Snow Pellets', 'snow', 12),
-    ('GS', '', '', 'Snow Pellets', 'snow', 12),
+    ('SG', 'BL', '', 'blowing_snow', 'snow', 12),
+    ('SG', '', '', 'snow', 'snow', 12),
+    ('GS', 'BL', '', 'blowing_snow_pellets', 'snow', 12),
+    ('GS', '', '', 'snow_pellets', 'snow', 12),
 
-    ('IC', '', '', 'Ice Crystals', 'snow', 13),
-    ('PL', '', '', 'Ice Pellets', 'snow', 13),
+    ('IC', '', '', 'ice_crystals', 'snow', 13),
+    ('PL', '', '', 'ice_pellets', 'snow', 13),
 
-    ('GR', '', '+', 'Heavy Hail', 'thunderstorm', 14),
-    ('GR', '', '', 'Hail', 'thunderstorm', 14),
+    ('GR', '', '+', 'heavy_hail', 'thunderstorm', 14),
+    ('GR', '', '', 'hail', 'thunderstorm', 14),
 ]
 
 
@@ -1188,7 +1234,7 @@ def wxfinished_metar(data=None):
                 if s[0] == c[0]:
                     if c[5] > pri:
                         pri = c[5]
-                        weather = c[3]
+                        weather = Locale.Lmetar.get(c[3], c[3])
                         icon = c[4]
     if f.weather:
         for w in f.weather:
@@ -1200,19 +1246,19 @@ def wxfinished_metar(data=None):
                                 if w[0][0:1] == c[2]:
                                     if c[5] > pri:
                                         pri = c[5]
-                                        weather = c[3]
+                                        weather = Locale.Lmetar.get(c[3], c[3])
                                         icon = c[4]
                     else:
                         if c[2] > '':
                             if w[0][0:1] == c[2]:
                                 if c[5] > pri:
                                     pri = c[5]
-                                    weather = c[3]
+                                    weather = Locale.Lmetar.get(c[3], c[3])
                                     icon = c[4]
                         else:
                             if c[5] > pri:
                                 pri = c[5]
-                                weather = c[3]
+                                weather = Locale.Lmetar.get(c[3], c[3])
                                 icon = c[4]
 
     if not daytime:
@@ -1231,53 +1277,53 @@ def wxfinished_metar(data=None):
     wxdesc2.setText(weather)
 
     temp_str = ''
-    pressure_str = Config.LPressure
-    humidity_str = Config.LHumidity
-    wind_speed_str = Config.LWind
+    pressure_str = Locale.LPressure
+    humidity_str = Locale.LHumidity
+    wind_speed_str = Locale.LWind
     wind_dir_str = ''
-    feelslike_str = Config.LFeelslike
+    feelslike_str = Locale.LFeelslike
 
     if f.wind_dir:
         if Config.wind_degrees:
-            wind_dir_str = str(f.wind_dir.value()) + u'°'
+            wind_dir_str = str(f.wind_dir.value()) + Locale.LDegreeSign
         else:
             wind_dir_str = f.wind_dir.compass()
 
     if Config.metric:
         if f.temp:
             temp_str = '%.1f' % f.temp.value('C')
-        temp_str += u'°C'
+        temp_str += Locale.LDegC
         if f.wind_speed:
-            wind_speed_str += wind_dir_str + ' ' + '%.1f' % f.wind_speed.value('KMH') + ' km/h'
+            wind_speed_str += wind_dir_str + ' ' + '%.1f' % f.wind_speed.value('KMH') + Locale.Lkmh
             if f.wind_gust:
-                wind_speed_str += (' ·' + Config.Lgusting +
-                                   '%.1f' % f.wind_gust.value('KMH') + ' km/h')
+                wind_speed_str += (' ·' + Locale.Lgusting +
+                                   '%.1f' % f.wind_gust.value('KMH') + Locale.Lkmh)
         if f.temp and f.dewpt:
-            feelslike_str += '%.1f' % tempf2tempc(feels_like(f)) + u'°C'
+            feelslike_str += '%.1f' % tempf2tempc(feels_like(f)) + Locale.LDegC
     else:
         if f.temp:
             temp_str = '%.1f' % f.temp.value('F')
-        temp_str += u'°F'
+        temp_str += Locale.LDegF
         if f.wind_speed:
-            wind_speed_str += wind_dir_str + ' ' + '%.1f' % f.wind_speed.value('MPH') + ' mph'
+            wind_speed_str += wind_dir_str + ' ' + '%.1f' % f.wind_speed.value('MPH') + Locale.Lmph
             if f.wind_gust:
-                wind_speed_str += (' ·' + Config.Lgusting +
-                                   '%.1f' % f.wind_gust.value('MPH') + ' mph')
+                wind_speed_str += (' ·' + Locale.Lgusting +
+                                   '%.1f' % f.wind_gust.value('MPH') + Locale.Lmph)
         if f.temp and f.dewpt:
-            feelslike_str += '%.1f' % feels_like(f) + u'°F'
+            feelslike_str += '%.1f' % feels_like(f) + Locale.LDegF
 
     if f.press:
         if Config.pressure_mbar:
-            pressure_str += '%.1f' % f.press.value('MB') + 'mbar'
+            pressure_str += '%.1f' % f.press.value('MB') + Locale.Lmbar
         else:
-            pressure_str += '%.2f' % f.press.value('IN') + 'inHg'
+            pressure_str += '%.2f' % f.press.value('IN') + Locale.LinHgBare
 
     if f.temp and f.dewpt:
         t = f.temp.value('C')
         d = f.dewpt.value('C')
         h = 100.0 * (math.exp((17.625 * d) / (243.04 + d)) /
                      math.exp((17.625 * t) / (243.04 + t)))
-        humidity_str += '%.0f%%' % h
+        humidity_str += '%.0f' % h + Locale.LPercent
 
     temper.setText(temp_str)
     temper2.setText(temp_str)
@@ -1287,7 +1333,7 @@ def wxfinished_metar(data=None):
     humidity.setText(humidity_str)
     wind.setText(wind_speed_str)
     feelslike.setText(feelslike_str)
-    wdate.setText('{0:%H:%M %Z} {1}'.format(dt, Config.METAR))
+    wdate.setText(Locale.LMetarObserved.format(dt, Config.METAR))
 
 
 def record_pressure_sample(value_inhg):
@@ -1363,11 +1409,6 @@ def getallwx():
 
     try:
         ApiKeys.tmapi
-        global tm_code_map
-        try:
-            tm_code_map = Config.Ltm_code_map
-        except AttributeError:
-            pass
         getwx_tm()
         return
     except AttributeError:
@@ -1499,7 +1540,7 @@ def noaa_alerts_finished():
     for feature in alertdata.get('features', []):
         props = feature.get('properties', {})
         alerts.append({
-            'event': props.get('event', 'Alert'),
+            'event': props.get('event', Locale.LAlertGeneric),
             'headline': props.get('headline', ''),
             'description': props.get('description', '') or '',
             'instruction': props.get('instruction', '') or '',
@@ -1524,51 +1565,13 @@ def noaa_alerts_finished():
 FLIGHT_API = 'https://api.airplanes.live/v2/point/%s/%s/%d'
 FEET_PER_NM = 6076.12
 
-# Callsign prefixes are ICAO airline codes. The feed's ownOp field is the
-# registered owner, which is often a leasing trust rather than the airline
-# flying it, so the callsign is the reliable signal. Unlisted codes just show
-# the raw callsign.
-ICAO_AIRLINES = {
-    # North America
-    'AAL': 'American', 'AAY': 'Allegiant', 'ACA': 'Air Canada', 'ASA': 'Alaska',
-    'ASH': 'Mesa', 'AWI': 'Air Wisconsin', 'DAL': 'Delta', 'EDV': 'Endeavor',
-    'ENY': 'Envoy', 'FFT': 'Frontier', 'GJS': 'GoJet', 'HAL': 'Hawaiian',
-    'JBU': 'JetBlue', 'JIA': 'PSA', 'JZA': 'Jazz', 'KAP': 'Cape Air',
-    'MXY': 'Breeze', 'NKS': 'Spirit', 'PDT': 'Piedmont', 'POE': 'Porter',
-    'QXE': 'Horizon', 'ROU': 'Air Canada Rouge', 'RPA': 'Republic',
-    'SCX': 'Sun Country', 'SKW': 'SkyWest', 'SWA': 'Southwest',
-    'TSC': 'Air Transat', 'UAL': 'United', 'VOI': 'Volaris', 'WJA': 'WestJet',
-    # Cargo
-    'ABX': 'ABX Air', 'CKS': 'Kalitta', 'CLX': 'Cargolux', 'FDX': 'FedEx',
-    'GEC': 'Lufthansa Cargo', 'GTI': 'Atlas Air', 'PAC': 'Polar Air',
-    'UPS': 'UPS',
-    # Business / fractional
-    'EJA': 'NetJets', 'LXJ': 'Flexjet',
-    # Europe
-    'AUA': 'Austrian', 'AFR': 'Air France', 'BAW': 'British Airways',
-    'BEL': 'Brussels', 'CFG': 'Condor', 'DLH': 'Lufthansa', 'EIN': 'Aer Lingus',
-    'EZY': 'easyJet', 'FIN': 'Finnair', 'IBE': 'Iberia', 'ICE': 'Icelandair',
-    'KLM': 'KLM', 'LOT': 'LOT', 'NAX': 'Norwegian', 'RYR': 'Ryanair',
-    'SAS': 'SAS', 'SWR': 'Swiss', 'TAP': 'TAP', 'THY': 'Turkish',
-    'VIR': 'Virgin Atlantic', 'VLG': 'Vueling', 'WZZ': 'Wizz Air',
-    # Rest of world
-    'AMX': 'Aeromexico', 'ANA': 'All Nippon', 'ANZ': 'Air New Zealand',
-    'AVA': 'Avianca', 'CPA': 'Cathay Pacific', 'CMP': 'Copa', 'ETD': 'Etihad',
-    'ETH': 'Ethiopian', 'JAL': 'Japan Airlines', 'KAL': 'Korean Air',
-    'LAN': 'LATAM', 'QFA': 'Qantas', 'QTR': 'Qatar', 'SIA': 'Singapore',
-    'UAE': 'Emirates', 'VOZ': 'Virgin Australia',
-    # Other
-    'CAP': 'Civil Air Patrol',
-}
-
-
 # Which way to look, drawn as an arrow. North is up, matching how you would
 # hold a map. Keys are exactly what bearing() returns, so the arrow and the
 # written compass point can never disagree.
-COMPASS_ARROWS = {
-    'N': '\u2191', 'NE': '\u2197', 'E': '\u2192', 'SE': '\u2198',
-    'S': '\u2193', 'SW': '\u2199', 'W': '\u2190', 'NW': '\u2196',
-}
+# Matched to Locale.Lcompass by position, so translating the compass points
+# does not leave the arrows pointing the wrong way.
+COMPASS_ARROWS = ('\u2191', '\u2197', '\u2192', '\u2198',
+                  '\u2193', '\u2199', '\u2190', '\u2196')
 
 
 def flight_elevation(alt_ft, dist_nm):
@@ -1664,9 +1667,9 @@ def qtstart():
     global sun, daytime, sunrise, sunset
     global tzlatlng
 
-    if Config.DateLocale != '':
+    if Locale.DateLocale != '':
         try:
-            locale.setlocale(locale.LC_TIME, Config.DateLocale)
+            locale.setlocale(locale.LC_TIME, Locale.DateLocale)
         except locale.Error:
             print('WARNING:', traceback.format_exc())
             pass
@@ -2203,11 +2206,11 @@ class AlertBubble(InfoBubble):
     def format_item(self, alert, position, total):
         title = alert['event'].upper()
         if alert.get('expires'):
-            title += '  ·  until {0:%-I:%M %p}'.format(alert['expires'])
+            title += Locale.LAlertUntil.format(alert['expires'])
         if total > 1:
-            title += '  ({0}/{1})'.format(position, total)
+            title += Locale.LBubbleCount.format(position, total)
         bits = [b for b in (alert.get('area'), alert.get('headline')) if b]
-        return title, '  •  '.join(bits)
+        return title, Locale.LBulletWide.join(bits)
 
     def mousePressEvent(self, event):
         if self.items:
@@ -2239,40 +2242,40 @@ class FlightBubble(InfoBubble):
         return (craft.get('icao') or craft.get('callsign')) or None
 
     def format_item(self, craft, position, total):
-        callsign = craft['callsign'] or craft['registration'] or 'Aircraft'
-        airline = ICAO_AIRLINES.get(callsign[:3].upper())
-        title = '%s %s' % (airline, callsign[3:].strip()) if airline else callsign
+        callsign = craft['callsign'] or craft['registration'] or Locale.LFlightUnknown
+        airline = Locale.Lairlines.get(callsign[:3].upper())
+        title = Locale.LFlightTitle % (airline, callsign[3:].strip()) if airline else callsign
         if total > 1:
-            title += '  ({0}/{1})'.format(position, total)
+            title += Locale.LBubbleCount.format(position, total)
 
         # Distance, altitude and speed follow Config.metric like the rest of
         # the clock; the feed itself reports nautical miles, feet and knots.
         if Config.metric:
-            dist = '%.0f km' % nm2km(craft['distance_nm'])
-            alt = '{:,.0f} m'.format(craft['altitude_ft'] * 0.3048)
-            speed_unit, speed_conv = 'km/h', nm2km
+            dist = '%.0f %s' % (nm2km(craft['distance_nm']), Locale.Lkm)
+            alt = '{:,.0f} {}'.format(craft['altitude_ft'] * 0.3048, Locale.Lmetres)
+            speed_unit, speed_conv = Locale.Lkmh.strip(), nm2km
         else:
-            dist = '%.0f mi' % nm2miles(craft['distance_nm'])
-            alt = '{:,.0f} ft'.format(craft['altitude_ft'])
-            speed_unit, speed_conv = 'mph', nm2miles
+            dist = '%.0f %s' % (nm2miles(craft['distance_nm']), Locale.Lmiles)
+            alt = '{:,.0f} {}'.format(craft['altitude_ft'], Locale.Lfeet)
+            speed_unit, speed_conv = Locale.Lmph.strip(), nm2miles
 
         bits = []
         if craft['bearing_deg'] is not None:
-            compass = bearing(float(craft['bearing_deg']))
-            bits.append('%s to the %s %s'
-                        % (dist, compass, COMPASS_ARROWS.get(compass, '')))
+            point = compass_index(craft['bearing_deg'])
+            bits.append(Locale.LFlightBearing
+                        % (dist, Locale.Lcompass[point], COMPASS_ARROWS[point]))
         else:
-            bits.append('%s away' % dist)
+            bits.append(Locale.LFlightAway % dist)
         bits.append(alt)
         if craft['speed_kt'] is not None:
             try:
-                bits.append('%.0f %s' % (speed_conv(float(craft['speed_kt'])), speed_unit))
+                bits.append(Locale.LFlightSpeed % (speed_conv(float(craft['speed_kt'])), speed_unit))
             except (TypeError, ValueError):
                 pass
-        bits.append('%.0f%s above horizon' % (craft['elevation_deg'], chr(176)))
+        bits.append(Locale.LFlightElevation % (craft['elevation_deg'], chr(176)))
         if craft['kind']:
             bits.append(craft['kind'].title())
-        return title, '  •  '.join(bits)
+        return title, Locale.LBulletWide.join(bits)
 
 
 class AlertDetailPanel(QtWidgets.QFrame):
@@ -2380,14 +2383,14 @@ class AlertDetailPanel(QtWidgets.QFrame):
             meta_bits.append(alert['area'])
         times = []
         if alert.get('effective'):
-            times.append('Effective {0:%a %-I:%M %p}'.format(alert['effective']))
+            times.append(Locale.LAlertEffective.format(alert['effective']))
         if alert.get('expires'):
-            times.append('Until {0:%a %-I:%M %p}'.format(alert['expires']))
+            times.append(Locale.LAlertExpires.format(alert['expires']))
         if times:
-            meta_bits.append(' · '.join(times))
+            meta_bits.append(Locale.LBulletNarrow.join(times))
         badges = [b for b in (alert.get('severity'), alert.get('urgency'), alert.get('certainty')) if b]
         if badges:
-            meta_bits.append(' · '.join(badges))
+            meta_bits.append(Locale.LBulletNarrow.join(badges))
         self.meta_label.setText('\n'.join(meta_bits))
 
         body_parts = []
@@ -2396,9 +2399,9 @@ class AlertDetailPanel(QtWidgets.QFrame):
         if alert.get('description'):
             body_parts.append(alert['description'])
         if alert.get('instruction'):
-            body_parts.append('WHAT TO DO:\n' + alert['instruction'])
+            body_parts.append(Locale.LAlertInstruction + '\n' + alert['instruction'])
         if alert.get('sender'):
-            body_parts.append('Source: ' + alert['sender'])
+            body_parts.append(Locale.LAlertSource + alert['sender'])
         self.text_edit.setPlainText('\n\n'.join(body_parts))
         self.text_edit.verticalScrollBar().setValue(0)
 
@@ -2407,7 +2410,7 @@ class AlertDetailPanel(QtWidgets.QFrame):
         self.nav_next.setVisible(multi)
         self.page_label.setVisible(multi)
         if multi:
-            self.page_label.setText('Alert {0} of {1}'.format(self._index + 1, len(self._alerts)))
+            self.page_label.setText(Locale.LAlertPaging.format(self._index + 1, len(self._alerts)))
 
     def mousePressEvent(self, event):
         # A tap that reaches here landed on the scrim itself, not the card
@@ -2497,9 +2500,8 @@ class MjpegStream(QtCore.QObject):
                     # Nothing else would notice, so the panel would sit on
                     # "Connecting..." forever without this.
                     self.failed.emit(
-                        'not a video stream (server sent "%s") - check the Blue '
-                        'Iris credentials and blueiris_use_session_login'
-                        % (content_type or 'no content type'))
+                        Locale.LBiNotVideo
+                        % (content_type or Locale.LBiNoContentType))
                     self.stop()
                     return
             self._buffer += bytes(self._reply.readAll())
@@ -2656,7 +2658,7 @@ class CameraPanel(QtWidgets.QFrame):
             tile = CameraTile(self.card, camera, self._tile_style)
             tile.expired.connect(self._on_expired)
             tile.lost.connect(self._on_lost)
-            tile.say('Connecting to %s...' % camera)
+            tile.say(Locale.LCameraConnecting % camera)
             self.tiles.append(tile)
             self._relayout()
             self._begin(tile)
@@ -2683,6 +2685,16 @@ class CameraPanel(QtWidgets.QFrame):
         self.tiles = []
         self._resume_slideshow()
         self._fade(0.0)
+
+    def stop(self):
+        """Tear every stream down, for shutdown. Unlike dismiss() this does not
+        animate and does not care whether the panel was on screen: a camera
+        left connected would hold the app open."""
+        for tile in self.tiles:
+            tile.close()
+        self.tiles = []
+        self._shown = False
+        self.hide()
 
     def mousePressEvent(self, event):
         self.dismiss()
@@ -2777,12 +2789,12 @@ class CameraPanel(QtWidgets.QFrame):
     def _begin(self, tile):
         """Start (or restart) one tile's stream, signing in first if needed."""
         if getattr(Config, 'blueiris_use_session_login', 0) and not self.session.key:
-            tile.say('Signing in to Blue Iris...')
+            tile.say(Locale.LCameraSigningIn)
             self.session.acquire()  # _on_session_ready starts whatever is waiting
             return
         url = blueiris_stream_url(tile.camera, self.session.key, tile.requested_width)
         if not url:
-            tile.say('blueiris_server is not set in Config.py')
+            tile.say(Locale.LCameraNoServer)
             return
         tile.stream.start(url, bool(getattr(Config, 'blueiris_ignore_ssl_errors', 0)))
 
@@ -2794,7 +2806,7 @@ class CameraPanel(QtWidgets.QFrame):
     def _on_session_failed(self, message):
         for tile in self.tiles:
             if not tile.has_picture():
-                tile.say('Blue Iris login failed\n' + message)
+                tile.say(Locale.LCameraLoginFailed + message)
 
     def _on_lost(self, tile, message):
         print('ERROR: Blue Iris stream (%s): %s' % (tile.camera, message))
@@ -2805,10 +2817,10 @@ class CameraPanel(QtWidgets.QFrame):
         if self.session.key and not tile.retried:
             tile.retried = True
             self.session.clear()
-            tile.say('Signing in to Blue Iris again...')
+            tile.say(Locale.LCameraSigningInAgain)
             self.session.acquire()
             return
-        tile.say('%s unavailable\n%s' % (tile.camera, message))
+        tile.say(Locale.LCameraUnavailable % (tile.camera, message))
 
     # -- slideshow ------------------------------------------------------------
 
@@ -3014,10 +3026,10 @@ class BlueIrisSession(QtCore.QObject):
         if self._busy:
             return  # a login is already in flight; its signal covers us both
         if not blueiris_server_url():
-            self.failed.emit('blueiris_server is not set in Config.py')
+            self.failed.emit(Locale.LCameraNoServer)
             return
         if not (getattr(Config, 'blueiris_user', '') or ''):
-            self.failed.emit('blueiris_user is not set in Config.py')
+            self.failed.emit(Locale.LBiNoUser)
             return
         self._busy = True
         self._post({'cmd': 'login'}, self._challenged)
@@ -3044,7 +3056,7 @@ class BlueIrisSession(QtCore.QObject):
         except ValueError:
             # A login page instead of JSON usually means the URL reached
             # something other than the Blue Iris web server.
-            self._give_up('Blue Iris did not return JSON from /json')
+            self._give_up(Locale.LBiNotJson)
             return None
 
     def _challenged(self, reply):
@@ -3054,7 +3066,7 @@ class BlueIrisSession(QtCore.QObject):
                 return
             session = data.get('session') or ''
             if not session:
-                self._give_up('no session key in the Blue Iris login response')
+                self._give_up(Locale.LBiNoSession)
                 return
             user = getattr(Config, 'blueiris_user', '') or ''
             password = getattr(Config, 'blueiris_password', '') or ''
@@ -3064,7 +3076,7 @@ class BlueIrisSession(QtCore.QObject):
                        self._answered)
         except Exception:
             print('WARNING:', traceback.format_exc())
-            self._give_up('could not build the Blue Iris login response')
+            self._give_up(Locale.LBiBuildFailed)
 
     def _answered(self, reply):
         try:
@@ -3072,8 +3084,8 @@ class BlueIrisSession(QtCore.QObject):
             if data is None:
                 return
             if str(data.get('result', '')).lower() != 'success':
-                reason = (data.get('data') or {}).get('reason') or 'login refused'
-                self._give_up('Blue Iris %s (check blueiris_user/blueiris_password)'
+                reason = (data.get('data') or {}).get('reason') or Locale.LBiLoginRefused
+                self._give_up(Locale.LBiLoginReason
                               % reason)
                 return
             self._busy = False
@@ -3082,7 +3094,7 @@ class BlueIrisSession(QtCore.QObject):
             self.ready.emit(self.key)
         except Exception:
             print('WARNING:', traceback.format_exc())
-            self._give_up('could not read the Blue Iris login response')
+            self._give_up(Locale.LBiReadFailed)
 
     def _give_up(self, message):
         self._busy = False
@@ -3937,7 +3949,7 @@ class Radar(QtWidgets.QLabel):
         ii3.fill(Qt.GlobalColor.transparent)
         painter2 = QPainter()
         painter2.begin(ii3)
-        timestamp = 'Radar Time: {0:%-I:%M %p}'.format(datetime.datetime.fromtimestamp(self.getTime))
+        timestamp = Locale.LRadarTime.format(datetime.datetime.fromtimestamp(self.getTime))
         painter2.setPen(QColor(63, 63, 63, 255))
         painter2.setFont(QFont("Arial", pointSize=8, weight=75))
         painter2.setRenderHint(QPainter.RenderHint.TextAntialiasing)
@@ -4192,23 +4204,32 @@ def myquit(signum, frame):
     global objradar1, objradar2, objradar3, objradar4
     global ctimer, wxtimer, temptimer, cursortimer, alerttimer, flighttimer
 
-    objradar1.stop()
-    objradar2.stop()
-    objradar3.stop()
-    objradar4.stop()
-    ctimer.stop()
-    wxtimer.stop()
-    temptimer.stop()
-    cursortimer.stop()
-    alerttimer.stop()
+    # Each step is best-effort. myquit() runs from a key press, and an
+    # exception in a Qt slot aborts the process outright - which would skip
+    # release_display_sleep() and leave the screen pinned awake by an orphaned
+    # caffeinate. Nothing here is allowed to prevent the rest from running.
+    def attempt(what, action):
+        try:
+            action()
+        except Exception:
+            print('WARNING: while shutting down (%s):' % what)
+            print(traceback.format_exc())
+
+    for name, radar in (('radar1', objradar1), ('radar2', objradar2),
+                        ('radar3', objradar3), ('radar4', objradar4)):
+        attempt(name, radar.stop)
+    for name, timer in (('ctimer', ctimer), ('wxtimer', wxtimer),
+                        ('temptimer', temptimer), ('cursortimer', cursortimer),
+                        ('alerttimer', alerttimer)):
+        attempt(name, timer.stop)
     if Config.flights_enabled and flighttimer is not None:
-        flighttimer.stop()
+        attempt('flighttimer', flighttimer.stop)
     if Config.useslideshow:
-        objimage1.stop()
+        attempt('slideshow', objimage1.stop)
     if blueirisListener is not None:
-        blueirisListener.stop()
-    cameraPanel.stream.stop()
-    release_display_sleep()
+        attempt('Blue Iris listener', blueirisListener.stop)
+    attempt('camera panel', cameraPanel.stop)
+    attempt('display sleep', release_display_sleep)
 
     QtCore.QTimer.singleShot(30, realquit)
 
@@ -4283,11 +4304,32 @@ configname = 'Config'
 if len(sys.argv) > 1:
     configname = sys.argv[1]
 
-if not os.path.isfile(configname + '.py'):
-    print('ERROR: Config file not found %s' % configname + '.py')
+# An alternate config may be given as a bare name (conf/Config-Bedside) or as
+# a path to somewhere else entirely.
+if os.path.isfile(os.path.join(CONF_DIR, configname + '.py')):
+    Config = __import__(configname)
+elif os.path.isfile(configname + '.py'):
+    sys.path.insert(0, os.path.dirname(os.path.abspath(configname)) or '.')
+    Config = __import__(os.path.basename(configname))
+else:
+    print('ERROR: Config file not found: %s'
+          % os.path.join(CONF_DIR, configname + '.py'))
     exit(1)
 
-Config = __import__(configname)
+# Everything the clock says, from conf/locale_<language>.py.
+Locale = load_locale(getattr(Config, 'language', 'en-us'))
+
+# A config written before the wording moved out may still define its own
+# strings. Those win, so an install that customised its labels keeps them.
+_carried = [name for name in dir(Locale)
+            if not name.startswith('_') and hasattr(Config, name)]
+if _carried:
+    print('NOTE: %s still set in %s.py; conf/locale_*.py is where these live '
+          'now. Using the values from %s.py for: %s'
+          % ('wording is' if len(_carried) == 1 else 'wording items are',
+             configname, configname, ', '.join(sorted(_carried))))
+    for name in _carried:
+        setattr(Locale, name, getattr(Config, name))
 
 # define default values for new/optional config variables.
 
@@ -4318,9 +4360,9 @@ except AttributeError:
     Config.dimcolor.setAlpha(0)
 
 try:
-    Config.DateLocale
+    Locale.DateLocale
 except AttributeError:
-    Config.DateLocale = ''
+    Locale.DateLocale = ''
 
 try:
     Config.wind_degrees
@@ -4411,47 +4453,6 @@ try:
 except AttributeError:
     Config.alert_severities = ('Severe', 'Extreme')  # NWS severity levels that trigger the warning bubble
     # other possible values, from least to most severe: 'Unknown', 'Minor', 'Moderate', 'Severe', 'Extreme'
-
-try:
-    Config.LPressure
-except AttributeError:
-    Config.LPressure = 'Pressure '
-    Config.LHumidity = 'Humidity '
-    Config.LWind = 'Wind '
-    Config.Lgusting = ' gust '
-    Config.LFeelslike = 'Feels like '
-    Config.LPrecip1hr = ' Precip 1hr:'
-    Config.LToday = 'Today: '
-    Config.LSunRise = 'Sun Rise: '
-    Config.LSet = ' · Set: '
-    Config.LMoonPhase = ' · Moon: '
-    Config.LInsideTemp = 'Inside Temp '
-    Config.LRain = '· Rain: '
-    Config.LSnow = '· Snow: '
-
-try:
-    Config.Lmoon1
-    Config.Lmoon2
-    Config.Lmoon3
-    Config.Lmoon4
-    Config.Lmoon5
-    Config.Lmoon6
-    Config.Lmoon7
-    Config.Lmoon8
-except AttributeError:
-    Config.Lmoon1 = 'New Moon'
-    Config.Lmoon2 = 'Waxing Crescent'
-    Config.Lmoon3 = 'First Quarter'
-    Config.Lmoon4 = 'Waxing Gibbous'
-    Config.Lmoon5 = 'Full Moon'
-    Config.Lmoon6 = 'Waning Gibbous'
-    Config.Lmoon7 = 'Third Quarter'
-    Config.Lmoon8 = 'Waning Crescent'
-
-try:
-    Config.digitalformat2
-except AttributeError:
-    Config.digitalformat2 = '{0:%H:%M:%S}'
 
 try:
     Config.useslideshow

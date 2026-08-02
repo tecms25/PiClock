@@ -67,28 +67,28 @@ if exist "fonts\*.ttf" (
 set NEW_APIKEYS=0
 set NEW_CONFIG=0
 
-if not exist "Clock\ApiKeys.py" (
-    copy /y "Clock\ApiKeys-example.py" "Clock\ApiKeys.py" >nul
+if not exist "conf\ApiKeys.py" (
+    copy /y "conf\ApiKeys-example.py" "conf\ApiKeys.py" >nul
     set NEW_APIKEYS=1
     echo.
-    echo Created Clock\ApiKeys.py from the example.
+    echo Created conf\ApiKeys.py from the example.
 ) else (
     echo.
-    echo Clock\ApiKeys.py already exists, leaving it alone.
+    echo conf\ApiKeys.py already exists, leaving it alone.
 )
 
-if not exist "Clock\Config.py" (
-    copy /y "Clock\Config-Example.py" "Clock\Config.py" >nul
+if not exist "conf\Config.py" (
+    copy /y "conf\Config-Example.py" "conf\Config.py" >nul
     set NEW_CONFIG=1
-    echo Created Clock\Config.py from the example.
+    echo Created conf\Config.py from the example.
 ) else (
-    echo Clock\Config.py already exists, leaving it alone.
+    echo conf\Config.py already exists, leaving it alone.
 )
 
 echo.
 if "%HAVE_POWERSHELL%"=="0" (
     echo powershell was not found - skipping interactive configuration.
-    echo Edit Clock\ApiKeys.py and Clock\Config.py manually.
+    echo Edit conf\ApiKeys.py and conf\Config.py manually.
     goto :after_configure
 )
 
@@ -97,7 +97,7 @@ if "%NEW_APIKEYS%%NEW_CONFIG%" NEQ "00" (
     set /p DOCONFIG="Interactively configure your API keys and Config.py settings now? [Y/n] "
     if /i "!DOCONFIG!"=="n" (set DOCONFIGURE=0) else (set DOCONFIGURE=1)
 ) else (
-    set /p DOCONFIG="Clock\ApiKeys.py and/or Clock\Config.py already exist. Interactively reconfigure them now? [y/N] "
+    set /p DOCONFIG="conf\ApiKeys.py and/or conf\Config.py already exist. Interactively reconfigure them now? [y/N] "
     if /i "!DOCONFIG!"=="y" (set DOCONFIGURE=1) else (set DOCONFIGURE=0)
 )
 
@@ -105,7 +105,7 @@ if "!DOCONFIGURE!"=="1" (
     powershell -NoProfile -ExecutionPolicy Bypass -File "%SCRIPT_DIR%\install_configure.ps1" -RepoDir "%SCRIPT_DIR%"
     if errorlevel 1 (
         echo.
-        echo Interactive configuration failed - edit Clock\ApiKeys.py and Clock\Config.py manually.
+        echo Interactive configuration failed - edit conf\ApiKeys.py and conf\Config.py manually.
     )
 )
 
@@ -113,7 +113,7 @@ if "!DOCONFIGURE!"=="1" (
 echo.
 echo === Install complete ===
 echo Next steps:
-echo   1. Double check Clock\ApiKeys.py and Clock\Config.py have what you expect.
+echo   1. Double check conf\ApiKeys.py and conf\Config.py have what you expect.
 echo      (Rerun this script if you skipped the interactive configuration.)
 echo   2. Test it:
 echo        venv\Scripts\activate

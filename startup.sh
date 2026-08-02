@@ -105,16 +105,16 @@ if [ "$1" = "-s" ] || [ "$1" = "--screen-log" ]; then
 else
 #  # create a new log file name, max of 7 log files
 #  echo "Rotating log files..."
-#  rm PyQtPiClock.7.log >/dev/null 2>&1
-#  mv PyQtPiClock.6.log PyQtPiClock.7.log >/dev/null 2>&1
-#  mv PyQtPiClock.5.log PyQtPiClock.6.log >/dev/null 2>&1
-#  mv PyQtPiClock.4.log PyQtPiClock.5.log >/dev/null 2>&1
-#  mv PyQtPiClock.3.log PyQtPiClock.4.log >/dev/null 2>&1
-#  mv PyQtPiClock.2.log PyQtPiClock.3.log >/dev/null 2>&1
-#  mv PyQtPiClock.1.log PyQtPiClock.2.log >/dev/null 2>&1
-#  echo "Starting PiClock... logging to Clock/PyQtPiClock.1.log"
+#  rm ../logs/PyQtPiClock.7.log >/dev/null 2>&1
+#  mv ../logs/PyQtPiClock.6.log ../logs/PyQtPiClock.7.log >/dev/null 2>&1
+#  mv ../logs/PyQtPiClock.5.log ../logs/PyQtPiClock.6.log >/dev/null 2>&1
+#  mv ../logs/PyQtPiClock.4.log ../logs/PyQtPiClock.5.log >/dev/null 2>&1
+#  mv ../logs/PyQtPiClock.3.log ../logs/PyQtPiClock.4.log >/dev/null 2>&1
+#  mv ../logs/PyQtPiClock.2.log ../logs/PyQtPiClock.3.log >/dev/null 2>&1
+#  mv ../logs/PyQtPiClock.1.log ../logs/PyQtPiClock.2.log >/dev/null 2>&1
+#  echo "Starting PiClock... logging to logs/PyQtPiClock.1.log"
 #  # start PiClock and add timestamp to log output
-#  python3 -u PyQtPiClock.py 2>&1 | (while read -r line; do echo "$(date +'%F %T.%6N %Z (UTC%z) -') $line"; done) >PyQtPiClock.1.log
-  echo "Starting PiClock... logging to Clock/PyQtPiClock.1.log (rotates daily at midnight)"
+#  python3 -u PyQtPiClock.py 2>&1 | (while read -r line; do echo "$(date +'%F %T.%6N %Z (UTC%z) -') $line"; done) >../logs/PyQtPiClock.1.log
+  echo "Starting PiClock... logging to logs/PyQtPiClock.1.log (rotates daily at midnight)"
   PICLOCK_DAILY_LOG=1 python3 -u PyQtPiClock.py
 fi

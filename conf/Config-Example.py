@@ -3,6 +3,12 @@ from PyQt6.QtGui import QColor
 
 from GoogleMercatorProjection import LatLng  # NOQA
 
+# LANGUAGE
+# Wording, date formats and weather-condition names live in
+# conf/locale_en-us.py. Set this to load a different file - 'de' would load
+# conf/locale_de.py - and copy locale_en-us.py as a starting point.
+language = 'en-us'
+
 # LOCATION(S)
 # Further radar configuration (zoom, marker location) can be
 # completed under the RADAR section
@@ -187,64 +193,6 @@ dimcolor.setAlpha(0)
 # https://airportcodes.aero/name
 METAR = ''
 
-# The Python Locale for date/time (locale.setlocale)
-#  '' for default Pi Setting
-# Locales must be installed in your Pi. To check what is installed:
-# locale -a
-# to install locales
-# sudo dpkg-reconfigure locales
-DateLocale = ''
-
-# Language specific wording
-LPressure = 'Pressure: '
-LHumidity = 'Humidity: '
-LWind = 'Wind: '
-Lgusting = ' Gusts: '
-LFeelslike = 'Feels Like: '
-LPrecip1hr = ' Precip 1hr: '
-LToday = 'Today: '
-LSunRise = 'Sun Rise: '
-LSet = ' · Set: '
-LMoonPhase = ' · Moon: '
-LInsideTemp = 'Inside Temp '
-LRain = '· Rain: '
-LSnow = '· Snow: '
-Lmoon1 = 'New Moon'
-Lmoon2 = 'Waxing Crescent'
-Lmoon3 = 'First Quarter'
-Lmoon4 = 'Waxing Gibbous'
-Lmoon5 = 'Full Moon'
-Lmoon6 = 'Waning Gibbous'
-Lmoon7 = 'Third Quarter'
-Lmoon8 = 'Waning Crescent'
-
-# Language specific terms for Tomorrow.io weather conditions
-Ltm_code_map = {
-    0: 'Unknown',
-    1000: 'Clear',
-    1100: 'Mostly Clear',
-    1101: 'Partly Cloudy',
-    1102: 'Mostly Cloudy',
-    1001: 'Cloudy',
-    2000: 'Fog',
-    2100: 'Light Fog',
-    4000: 'Drizzle',
-    4001: 'Rain',
-    4200: 'Light Rain',
-    4201: 'Heavy Rain',
-    5000: 'Snow',
-    5001: 'Flurries',
-    5100: 'Light Snow',
-    5101: 'Heavy Snow',
-    6000: 'Freezing Drizzle',
-    6001: 'Freezing Rain',
-    6200: 'Light Freezing Rain',
-    6201: 'Heavy Freezing Rain',
-    7000: 'Ice Pellets',
-    7101: 'Heavy Ice Pellets',
-    7102: 'Light Ice Pellets',
-    8000: 'Thunderstorm'
-}
 
 # RADAR
 # By default, radar_location entered will be the

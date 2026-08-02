@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Add newly released settings to an existing Clock/Config.py and ApiKeys.py.
+"""Add newly released settings to an existing conf/Config.py and ApiKeys.py.
 
 PiClock picks up new settings over time. Copying the example files over the top
 would wipe your location, API keys and preferences, so this only appends the
@@ -14,16 +14,25 @@ A timestamped backup of each file is written before it is touched.
 import argparse
 import ast
 import os
+import re
 import shutil
 import sys
 import time
 
 REPO = os.path.dirname(os.path.abspath(__file__))
 
+# Settings PiClock no longer reads at all - left behind by features or weather
+# providers that have gone. Removed from a config whatever their value, because
+# nothing looks at them: unlike wording, there is no customisation to lose.
+RETIRED = (
+    'LToday',       # 'Today: ' - dropped with the pre-Tomorrow.io forecast block
+    'LPrecip1hr',   # ' Precip 1hr: ' - same
+)
+
 # (example file, the live file it seeds)
 PAIRS = (
-    (os.path.join('Clock', 'Config-Example.py'), os.path.join('Clock', 'Config.py')),
-    (os.path.join('Clock', 'ApiKeys-example.py'), os.path.join('Clock', 'ApiKeys.py')),
+    (os.path.join('conf', 'Config-Example.py'), os.path.join('conf', 'Config.py')),
+    (os.path.join('conf', 'ApiKeys-example.py'), os.path.join('conf', 'ApiKeys.py')),
 )
 
 
@@ -64,6 +73,45 @@ def imported_names(tree):
             for alias in node.names:
                 names.add(alias.asname or alias.name)
     return names
+
+
+def setting_ranges(text):
+    """(name, first_line, last_line) for each top-level setting, 0-based and
+    end-exclusive, covering the comments above it and any follow-up mutation.
+    setting_blocks() is this plus the source text."""
+    lines = text.split('\n')
+    body = ast.parse(text).body
+    ranges = []
+    seen = set()
+    for index, node in enumerate(body):
+        name = None
+        if (isinstance(node, ast.Assign) and len(node.targets) == 1
+                and isinstance(node.targets[0], ast.Name)):
+            name = node.targets[0].id
+        elif isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name):
+            name = node.target.id
+        if name is None or name in seen:
+            continue
+        seen.add(name)
+
+        start = node.lineno - 1
+        above = start - 1
+        while above >= 0 and lines[above].lstrip().startswith('#'):
+            above -= 1
+        start = above + 1
+
+        end = node.end_lineno
+        for later in body[index + 1:]:
+            if isinstance(later, ast.Expr) and isinstance(later.value, ast.Call):
+                func = later.value.func
+                if (isinstance(func, ast.Attribute)
+                        and isinstance(func.value, ast.Name)
+                        and func.value.id == name):
+                    end = later.end_lineno
+                    continue
+            break
+        ranges.append((name, start, end))
+    return ranges
 
 
 def setting_blocks(text):
@@ -188,10 +236,165 @@ def merge_one(example_rel, target_rel, dry_run, prompt=False):
     return 'merged'
 
 
+def literal_settings(text):
+    """{name: value} for every top-level setting whose value is a plain
+    literal - a string, number, tuple, dict and so on.
+
+    Read rather than imported: a config imports PyQt6 and
+    GoogleMercatorProjection and would need its own directory on the path, and
+    importing it to decide what to delete means running it first. Wording is
+    always literal, so parsing reaches everything that matters here.
+    """
+    values = {}
+    for node in ast.parse(text).body:
+        targets = []
+        if isinstance(node, ast.Assign):
+            targets = [t.id for t in node.targets if isinstance(t, ast.Name)]
+        elif isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name):
+            targets = [node.target.id]
+        if not targets:
+            continue
+        try:
+            value = ast.literal_eval(node.value)
+        except (ValueError, TypeError, SyntaxError):
+            continue  # not a literal (a call, a name); never wording
+        for name in targets:
+            values[name] = value
+    return values
+
+
+def tidy_wording(target_rel, dry_run, prompt):
+    """Remove wording from a config that conf/locale_*.py now owns.
+
+    Only entries whose value still matches the locale file are removed - those
+    say nothing the locale does not already say. Anything that has been changed
+    is left where it is and reported, because deleting it would silently revert
+    the customisation: PiClock lets a config's wording win precisely so an
+    upgrade cannot do that.
+
+    Returns 'tidied' if lines were removed, True if there was nothing to do,
+    False on error.
+    """
+    target = os.path.join(REPO, target_rel)
+    english = os.path.join(REPO, 'conf', 'locale_en-us.py')
+    if not os.path.isfile(target) or not os.path.isfile(english):
+        return True
+
+    try:
+        english_text, _ = read_text(english)
+        owned = literal_settings(english_text)
+    except (OSError, SyntaxError) as exc:
+        print('  ERROR reading conf/locale_en-us.py: %s' % exc)
+        return False
+
+    try:
+        text, newline = read_text(target)
+        mine = literal_settings(text)
+    except (OSError, SyntaxError) as exc:
+        print('  ERROR %s will not parse, refusing to touch it: %s'
+              % (target_rel, exc))
+        return False
+
+    moved, retired, customised = [], [], []
+    for name, start, end in setting_ranges(text):
+        if name in RETIRED:
+            retired.append((name, start, end))
+        elif name not in owned or name not in mine:
+            continue
+        elif mine[name] == owned[name]:
+            moved.append((name, start, end))
+        else:
+            customised.append((name, start, end))
+    redundant = moved + retired
+
+    if customised:
+        print('  %s keeps %d customised wording setting(s); the locale file '
+              'does not override these, so they are left alone:'
+              % (target_rel, len(customised)))
+        for name, _, _ in customised:
+            print('      %s' % name)
+        print('      To move them: copy conf/locale_en-us.py to '
+              'conf/locale_mine.py, put your')
+        print('      wording there, set language = \'mine\' in %s, then delete '
+              'them here.' % os.path.basename(target_rel))
+    if not redundant:
+        if not customised:
+            print('  %s has no leftover wording to remove.' % target_rel)
+        return True
+
+    if moved:
+        print('  %s has %d wording setting(s) that conf/locale_en-us.py now '
+              'owns, still at the default:' % (target_rel, len(moved)))
+        for name, _, _ in moved:
+            print('      %s' % name)
+    if retired:
+        print('  %s has %d setting(s) PiClock no longer uses at all:'
+              % (target_rel, len(retired)))
+        for name, _, _ in retired:
+            print('      %s' % name)
+
+    if dry_run:
+        print('      (dry run, nothing removed)')
+        return True
+    if prompt:
+        try:
+            answer = input('      Remove these from %s? [Y/n] '
+                           % target_rel).strip().lower()
+        except EOFError:
+            answer = 'n'
+        if answer.startswith('n'):
+            print('      Left in place.')
+            return True
+
+    drop = set()
+    for _, start, end in redundant:
+        drop.update(range(start, end))
+    lines = text.split('\n')
+    kept = [line for i, line in enumerate(lines) if i not in drop]
+    tidied = re.sub(r'\n{4,}', '\n\n\n', '\n'.join(kept))
+
+    try:
+        ast.parse(tidied, filename=target_rel)
+    except SyntaxError as exc:
+        print('  ERROR removing would have broken %s (%s). Nothing written.'
+              % (target_rel, exc))
+        return False
+
+    backup = '%s.bak-%s' % (target, time.strftime('%Y%m%d-%H%M%S'))
+    shutil.copy2(target, backup)
+    write_text(target, tidied, newline)
+    print('      removed from %s (backup: %s)'
+          % (target_rel, os.path.basename(backup)))
+    return 'tidied'
+
+
+def locale_pairs():
+    """conf/locale_en-us.py seeds every other locale file.
+
+    The English file is the one PiClock ships and keeps up to date, so it is
+    the reference. A translation written against an older release will not have
+    the newer wording; this puts the English text in so there is something to
+    translate rather than a gap. PiClock falls back to English for anything
+    still missing, so a stale translation degrades rather than breaks.
+    """
+    reference = os.path.join('conf', 'locale_en-us.py')
+    conf_dir = os.path.join(REPO, 'conf')
+    if not os.path.isfile(os.path.join(REPO, reference)) or not os.path.isdir(conf_dir):
+        return []
+    pairs = []
+    for name in sorted(os.listdir(conf_dir)):
+        if not name.startswith('locale_') or not name.endswith('.py'):
+            continue
+        if name == 'locale_en-us.py':
+            continue  # the reference itself; git keeps this one current
+        pairs.append((reference, os.path.join('conf', name)))
+    return pairs
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(
-        description='Add new PiClock settings to an existing config, keeping '
-                    'your current values.')
+        description='Add new PiClock settings and wording to an existing '
+                    'install, keeping your current values.')
     parser.add_argument('--dry-run', action='store_true',
                         help='report what is missing without changing anything')
     parser.add_argument('--prompt', action='store_true',
@@ -201,12 +404,22 @@ def main(argv=None):
     print('Checking for new settings...')
     ok = True
     changed = False
-    for example_rel, target_rel in PAIRS:
+    for example_rel, target_rel in tuple(PAIRS) + tuple(locale_pairs()):
         result = merge_one(example_rel, target_rel, args.dry_run, args.prompt)
         if result is False:
             ok = False
         elif result == 'merged':
             changed = True
+
+    # Wording that moved to conf/locale_*.py: drop the copies a config is
+    # still carrying, now that any genuinely new settings have been added.
+    for _, target_rel in PAIRS:
+        if 'Config' in os.path.basename(target_rel):
+            result = tidy_wording(target_rel, args.dry_run, args.prompt)
+            if result is False:
+                ok = False
+            elif result == 'tidied':
+                changed = True
 
     if not ok:
         print('\nFinished with errors; see above.')

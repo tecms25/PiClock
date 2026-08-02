@@ -91,7 +91,7 @@ NeoPixel LEDs - an installer script can do the rest of this section for you:
 it creates the virtual environment, installs PyQt6 and the required Python
 packages (offering to use `apt` for `python3-pyqt6`/`mpg123` on Raspberry Pi
 OS), installs the bundled Open Sans fonts from the `fonts` folder for the
-current user, sets up `Clock/ApiKeys.py` and `Clock/Config.py` from the
+current user, sets up `conf/ApiKeys.py` and `conf/Config.py` from the
 examples, and interactively prompts you for your location, API keys, map
 provider (including custom Mapbox base/overlay styles), slideshow, NOAA alert,
 and day/night screen brightness settings. On a GNOME desktop it also offers to
@@ -102,7 +102,7 @@ cd PiClock
 bash install.sh
 ```
 It's safe to run again later - it won't overwrite an existing
-`Clock/ApiKeys.py` or `Clock/Config.py` unless you explicitly opt back into
+`conf/ApiKeys.py` or `conf/Config.py` unless you explicitly opt back into
 the interactive prompts. If you skip the prompts (or need settings the
 installer doesn't ask about, like the radar map centers/markers), continue
 with the manual steps below. If you need the optional hardware add-ons (GPIO
@@ -492,6 +492,39 @@ ADS-B feed. No account or API key is needed, but it is someone else's
 bandwidth being spent, which is why this is off unless you turn it on. If you
 enable it, keep `flight_poll_seconds` reasonable.
 
+#### Where things live
+```
+Clock/          the application
+conf/           settings, keys and wording
+  Config.py         your settings (not in git)
+  ApiKeys.py        your API keys (not in git)
+  locale_en-us.py   every word the clock puts on screen
+  GoogleMercatorProjection.py
+logs/           PyQtPiClock.1.log ... .7.log
+```
+
+Wording used to be split between `Config.py` and the main script. It is all in
+`conf/locale_en-us.py` now - labels, moon phases, weather-condition names,
+units, alert and camera messages. To change what the clock says, edit that
+file; to run another language, copy it to `conf/locale_<code>.py`, translate
+the values on the right, and set `language` in `Config.py` to that code.
+
+Console and log messages are deliberately not in there. They are diagnostics
+for whoever is reading a terminal, not part of the display.
+
+If you are upgrading, `update.py` moves your existing `Clock/Config.py` and
+`Clock/ApiKeys.py` into `conf/` and your logs into `logs/`. A config that still
+defines its own wording keeps working - those values win over the locale file,
+and PiClock prints a note at startup naming what it picked up so you know what
+to move.
+
+`update.sh` also keeps translations current. `conf/locale_en-us.py` is the one
+PiClock ships and updates, so when a release adds new wording, `merge_config.py`
+appends the new entries (in English) to every other `conf/locale_*.py` you have,
+ready for you to translate. Anything still missing falls back to English at
+startup with a note in the log, so a translation that has fallen behind shows a
+few English labels rather than stopping the clock.
+
 #### Blue Iris camera alerts
 If you run [Blue Iris](https://blueirissoftware.com/), a camera can put itself
 on screen the moment it trips an alert, then the clock comes back. Nothing is
@@ -659,7 +692,7 @@ python3 merge_config.py --dry-run   # list what you are missing
 python3 merge_config.py             # add it
 ```
 
-It appends only the settings your `Clock/Config.py` and `Clock/ApiKeys.py` do
+It appends only the settings your `conf/Config.py` and `conf/ApiKeys.py` do
 not already have, at their default values and with their explanatory comments,
 and leaves everything you have already set alone. A timestamped `.bak-` copy of
 each file is written first, and re-running it is harmless once you are up to
