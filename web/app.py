@@ -11,6 +11,7 @@ machine its owner believes is switched off.
 """
 
 import datetime
+import logging
 import os
 import secrets as secrets_module
 import ssl
@@ -63,9 +64,29 @@ def panel_settings():
     return values
 
 
+class QuietPolls(logging.Filter):
+    """Keep the panel's own request log readable.
+
+    The Status and Control pages poll a couple of endpoints every few seconds,
+    and one access-log line each buries everything worth reading. Successful
+    polls are dropped; a poll that failed still gets through, because that is
+    the part anyone would want to see.
+    """
+
+    POLLED = ('/api/audio', '/screenshot.jpg')
+
+    def filter(self, record):
+        message = record.getMessage()
+        if not any(path in message for path in self.POLLED):
+            return True
+        return not (' 200 ' in message or ' 304 ' in message)
+
+
 def create_app(settings=None, secrets_path=SECRETS, audit_db=AUDIT_DB):
     settings = settings or panel_settings()
     secrets = security.read_secrets(secrets_path)
+
+    logging.getLogger('werkzeug').addFilter(QuietPolls())
 
     app = Flask(__name__)
     app.config['SETTINGS'] = settings

@@ -3080,7 +3080,12 @@ class CommandListener(RequestLineServer):
 
         name = params.get('do', '')
         ok, message = run_command(name, params)
-        print('INFO: panel command %r -> %s' % (name, message))
+        # Queries are not logged. The control panel asks for the audio state
+        # every few seconds to keep its display honest, and logging a line for
+        # each one buries everything that actually happened. Anything that
+        # changes something still gets a line, and a failure always does.
+        if name not in QUERY_COMMANDS or not ok:
+            print('INFO: panel command %r -> %s' % (name, message))
         return '200 %s' % message if ok else '400 %s' % message
 
 
@@ -3495,6 +3500,10 @@ COMMANDS = {
     'audio_stop': lambda params: stop_audio_stream(),
     'audio_status': lambda params: audio_status_text(),
 }
+
+# Commands that only report, and are polled. They change nothing, so a log line
+# for each is noise rather than a record.
+QUERY_COMMANDS = ('audio_status',)
 
 
 def run_command(name, params=None):
