@@ -57,6 +57,17 @@
 <div class="card">
   <h2>Audio streams <span class="count">{{ streams|length }}</span></h2>
   <p class="state-line" id="audio-state" {% if not audio_state %}hidden{% endif %}>{{ audio_state }}</p>
+
+  {% if volume_available %}
+  <form method="post" action="{{ url_for('set_volume') }}" data-live class="volume">
+    <input type="hidden" name="csrf" value="{{ csrf_token() }}">
+    <label for="volume">Volume</label>
+    <input type="range" id="volume" name="volume" min="0" max="100" step="1"
+           value="{{ volume if volume is not none else 50 }}">
+    <output id="volume-value">{{ volume if volume is not none else '--' }}%</output>
+    <noscript><button type="submit">Set</button></noscript>
+  </form>
+  {% endif %}
   {% if streams %}
   <p class="muted">Played through the Pi's own speakers. One at a time -
     starting another swaps it over. While something is playing the clock shows

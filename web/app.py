@@ -28,6 +28,7 @@ import control                                                 # noqa: E402
 import security                                                # noqa: E402
 import settings as config_settings                             # noqa: E402
 import status                                                  # noqa: E402
+import volume as output_volume                                 # noqa: E402
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 CONF = os.path.join(REPO, 'conf')
@@ -211,6 +212,8 @@ def create_app(settings=None, secrets_path=SECRETS, audit_db=AUDIT_DB):
                                # Asked of the clock as the page is built; the
                                # page then polls /api/audio to keep it current.
                                audio_state=audio_state(),
+                               volume=output_volume.get(),
+                               volume_available=output_volume.available(),
                                service=status.service_status(),
                                events=audit.recent(audit_db))
 
@@ -300,13 +303,27 @@ def create_app(settings=None, secrets_path=SECRETS, audit_db=AUDIT_DB):
 
     @app.route('/api/audio')
     def api_audio():
-        """Just the audio line, small enough for the page to poll.
+        """Just the audio line and volume, small enough for the page to poll.
 
         A stream can fail a second or two after it was started, which the
         response to the Play button is too early to know about - so the page
-        keeps asking rather than showing whatever was true at the time.
+        keeps asking rather than showing whatever was true at the time. The
+        volume comes along so the slider follows a change made elsewhere.
         """
-        return jsonify({'state': audio_state()})
+        return jsonify({'state': audio_state(), 'volume': output_volume.get()})
+
+    @app.route('/volume', methods=['POST'])
+    def set_volume():
+        ok, message, level = output_volume.set_level(request.form.get('volume'))
+        audit.record(audit_db, caller(), 'volume',
+                     'ok' if ok else 'failed', message)
+        if wants_json():
+            return jsonify({'ok': ok, 'message': message, 'volume': level,
+                            'audio': audio_state(),
+                            'service': status.service_status(),
+                            'events': audit.recent(audit_db)})
+        flash(message, 'ok' if ok else 'error')
+        return redirect(url_for('control_page'))
 
     @app.route('/api/status')
     def api_status():

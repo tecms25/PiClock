@@ -818,8 +818,15 @@ audio_streams = [
 ]
 ```
 
-Only one plays at a time - starting another swaps it over - and while one is
-playing **the clock shows a small `▶ <name>` marker in its top right corner**,
+The Control page also has a **volume slider** for the Pi's output. It uses
+whichever mixer the system has - `wpctl` on PipeWire (Raspberry Pi OS Bookworm
+and current Ubuntu), then `pactl`, then `amixer` on older ALSA-only images -
+and is hidden if none is installed. Moving it also unmutes, since a slider that
+does nothing on a muted device just looks broken. It works whether or not the
+clock is running, and follows a change made elsewhere within a few seconds.
+
+Only one stream plays at a time - starting another swaps it over - and while
+one is playing **the clock shows a small `▶ <name>` marker near the top**,
 which stays visible even with the clock face hidden by F9. F2 still toggles the
 first stream from the keyboard.
 

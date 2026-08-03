@@ -33,10 +33,41 @@
       !service.available ? 'unknown' : (active === 'active' ? 'good' : 'bad'));
   }
 
+  var volumeInput = document.getElementById('volume');
+  var volumeValue = document.getElementById('volume-value');
+  var adjusting = false;
+
   function renderAudio(state) {
     if (!audioBox || typeof state !== 'string') { return; }
     audioBox.textContent = state;
     audioBox.hidden = state === '';
+  }
+
+  function renderVolume(level) {
+    // Ignored mid-drag: a poll landing while the slider is being moved would
+    // otherwise yank it back to where it was a moment ago.
+    if (!volumeInput || adjusting || typeof level !== 'number') { return; }
+    volumeInput.value = level;
+    if (volumeValue) { volumeValue.textContent = level + '%'; }
+  }
+
+  if (volumeInput) {
+    // 'input' fires continuously while dragging - used only to update the
+    // number - and 'change' fires once on release, which is what gets sent.
+    volumeInput.addEventListener('input', function () {
+      adjusting = true;
+      if (volumeValue) { volumeValue.textContent = volumeInput.value + '%'; }
+    });
+    volumeInput.addEventListener('change', function () {
+      adjusting = false;
+      var form = volumeInput.form;
+      if (!form) { return; }
+      if (form.requestSubmit) {
+        form.requestSubmit();      // goes through the data-live handler below
+      } else {
+        submit(form);
+      }
+    });
   }
 
   /* A stream can fail a second or two after it starts, so the reply to the
@@ -53,7 +84,7 @@
       }).then(function (r) {
         return r.ok ? r.json() : null;
       }).then(function (data) {
-        if (data) { renderAudio(data.state); }
+        if (data) { renderAudio(data.state); renderVolume(data.volume); }
       }).catch(function () { /* a blip; the next poll can try again */ });
     }, 5000);
   }
@@ -111,6 +142,7 @@
       show(data.message || 'Done.', !!data.ok);
       renderState(data.service);
       renderAudio(data.audio);
+      renderVolume(data.volume);
       renderActivity(data.events);
     }).catch(function () {
       show('Could not reach the panel. It may have restarted - reload the page.',
