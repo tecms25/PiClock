@@ -314,4 +314,7 @@ web_command_port = 8128
 #     {'name': 'County fire and EMS', 'url': 'https://example.com/feed.m3u8'},
 #     {'name': 'Police dispatch', 'url': 'https://example.com/police.m3u8'},
 # ]
+# A host that refuses the player's own request can be given headers:
+#     {'name': 'Scanner', 'url': '...', 'referer': 'https://example.com/',
+#      'user_agent': 'Mozilla/5.0'},
 audio_streams = []

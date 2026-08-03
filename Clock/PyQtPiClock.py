@@ -3033,19 +3033,32 @@ class CommandListener(RequestLineServer):
 AUDIO_PLAYERS = (
     # No -autoexit: these are live feeds with no end, and a momentary gap in
     # the segment list must not be read as one. The reconnect options let a
-    # scanner feed survive a dropped connection instead of dying with it, and
-    # a user agent is sent because some stream hosts refuse the default.
+    # scanner feed survive a dropped connection instead of dying with it.
+    #
+    # No user agent is forced. Each player sends its own, which stream hosts
+    # already know; overriding it with something invented is a good way to be
+    # refused by a CDN that gates on the header. Set user_agent on a stream to
+    # override it where one is genuinely needed.
     ('ffplay', ['ffplay', '-nodisp', '-loglevel', 'warning',
-                '-user_agent', 'PiClock/1.0',
                 '-reconnect', '1', '-reconnect_streamed', '1',
                 '-reconnect_delay_max', '10']),
-    ('mpv', ['mpv', '--no-video', '--really-quiet',
-             '--user-agent=PiClock/1.0']),
-    ('cvlc', ['cvlc', '--intf', 'dummy', '--no-video',
-              '--http-user-agent=PiClock/1.0']),
+    ('mpv', ['mpv', '--no-video', '--really-quiet']),
+    ('cvlc', ['cvlc', '--intf', 'dummy', '--no-video']),
     ('mpg123', ['mpg123', '-q']),
 )
 HLS_CAPABLE = ('ffplay', 'mpv', 'cvlc')
+
+# How each player is told to send a User-Agent and a Referer. Some hosts -
+# Broadcastify among them - can be particular about both.
+AUDIO_HEADER_FLAGS = {
+    'ffplay': {'user_agent': ['-user_agent', '%s'],
+               'referer': ['-headers', 'Referer: %s\r\n']},
+    'mpv': {'user_agent': ['--user-agent=%s'],
+            'referer': ['--http-header-fields=Referer: %s']},
+    'cvlc': {'user_agent': ['--http-user-agent=%s'],
+             'referer': ['--http-referrer=%s']},
+    'mpg123': {},
+}
 
 # A live stream can take a while to start - an HLS feed has to fetch several
 # segments before it makes a sound, and 10-20 seconds is normal. A player that
@@ -3058,13 +3071,61 @@ def is_hls(url):
     return urlparse(url or '').path.lower().endswith(('.m3u8', '.m3u8/'))
 
 
-def audio_player_argv(url):
-    """The command to play this URL, or None if nothing installed can."""
+# Players that can decode a stream handed to them on stdin, for when the fetch
+# is done by something else.
+PIPE_PLAYERS = (
+    ('ffplay', ['ffplay', '-nodisp', '-loglevel', 'warning', '-i', '-']),
+    ('mpv', ['mpv', '--no-video', '--really-quiet', '-']),
+)
+
+
+def audio_pipeline(url, headers=None):
+    """The command(s) to play this URL, or None if nothing here can.
+
+    Usually one command. For HLS it is two when streamlink is installed:
+    streamlink fetches the stream and pipes plain MPEG-TS to a player.
+
+    That indirection exists because some hosts refuse ffmpeg's connection
+    outright - Broadcastify answers curl and wget with 200 and ffmpeg, VLC and
+    python-urllib with 403, whatever headers they send. streamlink does its own
+    HTTP and is accepted, so letting it do the fetching sidesteps a block that
+    cannot be argued with from the ffmpeg side.
+    """
+    headers = headers or {}
+    if is_hls(url) and shutil.which('streamlink'):
+        for name, base in PIPE_PLAYERS:
+            if not shutil.which(name):
+                continue
+            fetch = ['streamlink', '--quiet', '--stdout']
+            for field, header in (('user_agent', 'User-Agent'),
+                                  ('referer', 'Referer')):
+                if headers.get(field):
+                    fetch += ['--http-header', '%s=%s' % (header, headers[field])]
+            # hls:// forces the plain HLS handler rather than site plugins.
+            fetch += ['hls://' + url, 'best']
+            return [fetch, list(base)]
+    argv = audio_player_argv(url, headers)
+    return [argv] if argv else None
+
+
+def audio_player_argv(url, headers=None):
+    """The command to play this URL, or None if nothing installed can.
+
+    headers may carry 'user_agent' and 'referer' for a host that insists on
+    them; a player with no way to set one simply goes without.
+    """
     for name, base in AUDIO_PLAYERS:
         if is_hls(url) and name not in HLS_CAPABLE:
             continue
-        if shutil.which(name):
-            return base + [url]
+        if not shutil.which(name):
+            continue
+        argv = list(base)
+        for field, value in sorted((headers or {}).items()):
+            if not value:
+                continue
+            for part in AUDIO_HEADER_FLAGS.get(name, {}).get(field, []):
+                argv.append(part % value if '%s' in part else part)
+        return argv + [url]
     return None
 
 
@@ -3085,7 +3146,9 @@ def audio_streams():
         except AttributeError:
             continue  # not a dict; skip rather than stop the clock
         if url:
-            streams.append({'name': name, 'url': url})
+            streams.append({'name': name, 'url': url,
+                            'user_agent': (entry.get('user_agent') or '').strip(),
+                            'referer': (entry.get('referer') or '').strip()})
     return streams
 
 
@@ -3125,17 +3188,27 @@ def _close_audio_errors():
         audio_errors = None
 
 
+def _stop_audio_processes():
+    """Kill every process in the pipeline, feeder included."""
+    global audio_player, audio_feeder
+    for proc in (audio_player, audio_feeder):
+        if proc is None:
+            continue
+        try:
+            proc.kill()
+        except OSError:
+            pass
+    audio_player = None
+    audio_feeder = None
+
+
 def stop_audio_stream():
     """Stop whatever is playing. Returns what it did."""
-    global audio_player, audio_index
+    global audio_index
     if audio_player is None:
         return 'nothing was playing'
     was = audio_playing_name()
-    try:
-        audio_player.kill()
-    except OSError:
-        pass
-    audio_player = None
+    _stop_audio_processes()
     audio_index = None
     _close_audio_errors()
     update_audio_indicator()
@@ -3154,8 +3227,10 @@ def play_audio_stream(index):
         return False, 'there is no stream %s' % index
 
     stream = streams[index]
-    argv = audio_player_argv(stream['url'])
-    if argv is None:
+    pipeline = audio_pipeline(stream['url'],
+                              {'user_agent': stream.get('user_agent', ''),
+                               'referer': stream.get('referer', '')})
+    if pipeline is None:
         if is_hls(stream['url']):
             return False, (Locale.LAudioNoHlsPlayer % stream['name'])
         return False, Locale.LAudioNoPlayer
@@ -3170,17 +3245,31 @@ def play_audio_stream(index):
         audio_errors = tempfile.TemporaryFile()
     except OSError:
         audio_errors = None
+    global audio_feeder
+    errors = audio_errors or subprocess.DEVNULL
     try:
-        audio_player = Popen(argv, stdout=subprocess.DEVNULL,
-                             stderr=audio_errors or subprocess.DEVNULL)
+        if len(pipeline) == 2:
+            # streamlink fetches, the player decodes what comes down the pipe.
+            audio_feeder = Popen(pipeline[0], stdout=subprocess.PIPE,
+                                 stderr=errors)
+            audio_player = Popen(pipeline[1], stdin=audio_feeder.stdout,
+                                 stdout=subprocess.DEVNULL, stderr=errors)
+            # Closing our copy means the player sees EOF if the feeder stops,
+            # rather than waiting on a pipe nothing will ever write to again.
+            audio_feeder.stdout.close()
+        else:
+            audio_feeder = None
+            audio_player = Popen(pipeline[0], stdout=subprocess.DEVNULL,
+                                 stderr=errors)
     except OSError as exc:
-        audio_player = None
+        _stop_audio_processes()
         audio_index = None
         _close_audio_errors()
         return False, 'could not start %s: %s' % (stream['name'], exc)
     audio_index = index
     audio_started = time.monotonic()
-    print('INFO: playing %s with %s' % (stream['name'], argv[0]))
+    print('INFO: playing %s with %s'
+          % (stream['name'], ' | '.join(argv[0] for argv in pipeline)))
     update_audio_indicator()
     return True, 'playing %s' % stream['name']
 
@@ -3192,10 +3281,15 @@ def check_audio_player():
     its own would otherwise leave the on-screen indicator claiming something is
     still playing.
     """
-    global audio_player, audio_index, audio_last_error
+    global audio_index, audio_last_error
     if audio_player is None:
         return
+    # Either end going down takes the stream with it: a dead feeder leaves the
+    # player with nothing to decode, and a dead player leaves the feeder
+    # writing into a pipe nobody reads.
     code = audio_player.poll()
+    if code is None and audio_feeder is not None:
+        code = audio_feeder.poll()
     if code is None:
         return
 
@@ -3212,7 +3306,8 @@ def check_audio_player():
         audio_last_error = ''
         print('INFO: audio stream ended (%s) after %.0fs%s'
               % (name, ran_for, ': ' + detail if detail else ''))
-    audio_player = None
+    # Both ends go, not just the one that exited.
+    _stop_audio_processes()
     audio_index = None
     _close_audio_errors()
     update_audio_indicator()
@@ -4960,6 +5055,7 @@ lastday = -1
 pdy = ''
 lasttimestr = ''
 audio_player = None    # the Popen playing a stream, or None
+audio_feeder = None    # upstream Popen when something else fetches the stream
 audio_index = None     # which entry of audio_streams() it is
 audio_started = 0.0    # when it started, to tell a failure from an ending
 audio_errors = None    # temp file collecting the player's stderr

@@ -267,17 +267,17 @@ if [ "$OS_NAME" = "Linux" ] && command -v apt-get >/dev/null 2>&1; then
   # ffmpeg supplies ffplay, which is what plays a scanner or internet radio
   # feed: those are nearly always .m3u8, and mpg123 cannot follow an HLS
   # playlist. mpg123 stays for plain MP3 streams like NOAA weather radio.
-  read -r -p "Install/update system packages (python3-full, python3-pyqt6, mpg123, ffmpeg) via apt? [Y/n] " REPLY
+  read -r -p "Install/update system packages (python3-full, python3-pyqt6, mpg123, ffmpeg, streamlink) via apt? [Y/n] " REPLY
   if [ "$REPLY" != "n" ] && [ "$REPLY" != "N" ]; then
     sudo apt update
-    sudo apt install -y python3-full python3-pyqt6 mpg123 ffmpeg
+    sudo apt install -y python3-full python3-pyqt6 mpg123 ffmpeg streamlink
     USE_SYSTEM_SITE_PACKAGES=1
   fi
 elif [ "$OS_NAME" = "Darwin" ] && command -v brew >/dev/null 2>&1; then
   echo ""
   read -r -p "Install mpg123 and ffmpeg via Homebrew (for the audio streams)? [Y/n] " REPLY
   if [ "$REPLY" != "n" ] && [ "$REPLY" != "N" ]; then
-    brew install mpg123 ffmpeg
+    brew install mpg123 ffmpeg streamlink
   fi
 fi
 
@@ -295,9 +295,19 @@ report_audio_players() {
     fi
   done
 
+  HAVE_SL=""
+  command -v streamlink >/dev/null 2>&1 && HAVE_SL="streamlink"
+
   echo ""
   if [ -n "$HAVE_HLS" ]; then
     echo "Audio: MP3 and .m3u8 (HLS) streams can both be played ($HAVE_HLS found)."
+    if [ -n "$HAVE_SL" ]; then
+      echo "       streamlink is installed, so feeds whose host refuses ffmpeg"
+      echo "       (Broadcastify scanners, for one) work too."
+    else
+      echo "       Some hosts refuse ffmpeg's connection outright and answer 403."
+      echo "       If a feed does that, install streamlink: sudo apt install streamlink"
+    fi
   elif [ -n "$HAVE_MP3" ]; then
     echo "Audio: MP3 streams can be played (mpg123 found), but .m3u8 (HLS)"
     echo "       feeds - most police/fire/EMS scanners - cannot."

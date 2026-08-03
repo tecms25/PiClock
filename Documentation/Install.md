@@ -828,9 +828,20 @@ playlist of segments, not an MP3 stream, and mpg123 cannot follow one. PiClock
 uses the first of `ffplay`, `mpv`, `cvlc` or `mpg123` that is installed and can
 handle the URL.
 
-`install.sh` installs `ffmpeg` (which provides `ffplay`) alongside `mpg123`,
-and finishes by reporting what the machine can actually play, so there is
-normally nothing to do. To add a player later:
+**Some hosts refuse ffmpeg outright.** Broadcastify is one: it answers `curl`
+and `wget` with 200 and ffmpeg, VLC and python-urllib with **403 Forbidden**,
+whatever User-Agent, Referer or other headers they send - so no setting fixes
+it. `streamlink` is accepted, so PiClock uses it to fetch any `.m3u8` when it
+is installed, and pipes plain MPEG-TS to ffplay. ffmpeg then never talks to the
+host at all. If a feed returns 403:
+
+```
+sudo apt install streamlink
+```
+
+`install.sh` installs `ffmpeg` (which provides `ffplay`), `streamlink` and
+`mpg123`, and finishes by reporting what the machine can actually play, so
+there is normally nothing to do. To add a player later:
 
 ```
 sudo apt install ffmpeg     # provides ffplay - the smallest of the three
