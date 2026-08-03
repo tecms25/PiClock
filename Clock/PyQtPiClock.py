@@ -2179,7 +2179,12 @@ class AlertBubble(InfoBubble):
     """
 
     WARNING_COLOUR = 'rgba(190, 20, 20, 195)'
-    WATCH_COLOUR = 'rgba(205, 110, 15, 195)'
+    # A deep burnt orange. The green channel is what decides whether this reads
+    # as orange or as gold, and the first attempt (110) sat firmly in gold; 74
+    # is unmistakably orange without becoming a bright traffic-cone one. Kept
+    # clear of the warning red above so the two are told apart at a glance -
+    # pushing it any darker starts to look like a dull version of the red.
+    WATCH_COLOUR = 'rgba(186, 74, 14, 205)'
 
     def __init__(self, parent, rect, detail_panel):
         InfoBubble.__init__(self, parent, rect, 'alertBubble',
