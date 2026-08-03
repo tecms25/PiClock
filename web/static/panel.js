@@ -198,6 +198,56 @@
     });
   }
 
+  /* Live screenshot of the clock, for working on one you cannot see. Loaded
+   * only when asked for: each frame makes the clock render and encode a
+   * full-screen image, which is real work on a Pi. */
+  var shotImage = document.getElementById('shot-image');
+  var shotNote = document.getElementById('shot-note');
+  var shotAuto = document.getElementById('shot-auto');
+  var shotTimer = null;
+  var shotBusy = false;
+
+  function loadShot() {
+    if (!shotImage || shotBusy) { return; }
+    shotBusy = true;
+    if (shotNote) { shotNote.textContent = 'Capturing...'; }
+    // A changing query string, or the browser shows the previous capture.
+    var probe = new Image();
+    probe.onload = function () {
+      shotImage.src = probe.src;
+      shotBusy = false;
+      if (shotNote) {
+        shotNote.textContent = 'Captured ' + new Date().toLocaleTimeString();
+      }
+    };
+    probe.onerror = function () {
+      shotBusy = false;
+      if (shotNote) {
+        shotNote.textContent = 'Could not capture - is the clock running?';
+      }
+    };
+    probe.src = '/screenshot.jpg?w=960&t=' + Date.now();
+  }
+
+  function setShotAuto(on) {
+    if (shotTimer) { clearInterval(shotTimer); shotTimer = null; }
+    if (!on) { return; }
+    // Deliberately unhurried: this is for watching a clock change, not video.
+    shotTimer = setInterval(function () {
+      if (!document.hidden) { loadShot(); }
+    }, 5000);
+  }
+
+  var shotButton = document.getElementById('shot-refresh');
+  if (shotButton) { shotButton.addEventListener('click', loadShot); }
+  if (shotAuto) {
+    shotAuto.addEventListener('change', function () {
+      setShotAuto(shotAuto.checked);
+      if (shotAuto.checked) { loadShot(); }
+    });
+  }
+  if (shotImage) { loadShot(); }
+
   document.addEventListener('submit', function (event) {
     var form = event.target;
     if (!form.hasAttribute) { return; }

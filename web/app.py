@@ -325,6 +325,22 @@ def create_app(settings=None, secrets_path=SECRETS, audit_db=AUDIT_DB):
         flash(message, 'ok' if ok else 'error')
         return redirect(url_for('control_page'))
 
+    @app.route('/screenshot.jpg')
+    def screenshot():
+        """What is on the clock's screen right now.
+
+        Never cached: the whole point is that it is current, and a browser
+        reusing the last one would show a stale screen with no sign of it.
+        """
+        kind, body = commands.screenshot(
+            settings.get('web_command_port', 8128),
+            app.config['COMMAND_TOKEN'],
+            request.args.get('w', 960))
+        if kind is None:
+            return (body, 503, {'Content-Type': 'text/plain'})
+        return app.response_class(body, mimetype=kind, headers={
+            'Cache-Control': 'no-store, max-age=0'})
+
     @app.route('/api/status')
     def api_status():
         return jsonify(status.snapshot())

@@ -311,6 +311,38 @@ details.group[open] > summary::before { transform: rotate(45deg); }
 details.group > summary:hover { color: var(--text); }
 details.group > .settings { margin: 0 1.15rem 1rem; }
 
+.shot-controls {
+  display: flex;
+  align-items: center;
+  gap: .85rem;
+  flex-wrap: wrap;
+  margin-bottom: .75rem;
+}
+
+.shot-controls label.inline {
+  display: inline-flex;
+  align-items: center;
+  gap: .4rem;
+  margin: 0;
+  color: var(--text);
+  font-size: .9rem;
+}
+
+/* Fixed aspect box so the card does not jump height while a new frame loads. */
+.shot {
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  overflow: hidden;
+  min-height: 8rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.shot img { display: block; width: 100%; height: auto; }
+.shot img:not([src]) { display: none; }
+
 .volume {
   display: flex;
   align-items: center;

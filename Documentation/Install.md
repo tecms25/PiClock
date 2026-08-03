@@ -734,8 +734,8 @@ at boot, change `-n` to `-d 15` in the unit's `ExecStart` to make the clock wait
 An HTTPS page for checking on and controlling the clock from another machine on
 your network. It has two pages:
 
-  * **Status** - service state, the clock process, a log tail and your current
-    settings, all read only
+  * **Status** - service state, the clock process, a live screenshot of the
+    screen, a log tail and your current settings, all read only
   * **Control** - start, restart and stop the clock, the live commands, and the
     record of who did what and when
   * **Settings** - edit `conf/Config.py`, with backups you can put back
@@ -858,6 +858,17 @@ sudo apt install vlc
 
 If none is present the panel says so rather than failing silently. Plain MP3
 streams keep working with mpg123 alone.
+
+**The live screenshot** on the Status page shows what is on the clock right
+now, which is the difference between guessing and looking when you are working
+on a clock in another room. The clock renders its own window rather than
+capturing the display, so there is nothing to install and it behaves the same
+on X11 and Wayland. Press **Refresh** for a frame, or tick **Keep refreshing**
+for one every five seconds - it pauses while the browser tab is in the
+background, since each frame is real work for a Pi.
+
+It captures whatever is on screen, **including a camera popup**, so set
+`web_screenshot_enabled = 0` in `conf/Config.py` to switch it off.
 
 **Live commands** are the same things the clock's own keys do - next/previous
 page, the slideshow controls, hiding the clock, the weather radio - and they

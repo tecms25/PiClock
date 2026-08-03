@@ -297,6 +297,10 @@ web_port = 8443
 # Use '127.0.0.1' to allow only a browser running on the Pi itself.
 web_bind = '0.0.0.0'
 web_session_hours = 12  # how long a sign-in lasts
+# The Status page can show a live screenshot of the clock, which is handy
+# when working on one you cannot see. It captures whatever is on screen at
+# the time, including a camera popup, so set this to 0 to switch it off.
+web_screenshot_enabled = 1  # 1 to allow, 0 to refuse
 # Port the clock listens on for the panel's live commands. Bound to
 # 127.0.0.1 only, so it is never reachable from the network - the panel runs
 # on the same machine and is the only thing that talks to it.

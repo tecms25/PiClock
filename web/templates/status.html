@@ -46,6 +46,16 @@
   </div>
 </div>
 
+<div class="card">
+  <h2>Screen</h2>
+  <div class="shot-controls">
+    <button type="button" id="shot-refresh">Refresh</button>
+    <label class="inline"><input type="checkbox" id="shot-auto"> Keep refreshing</label>
+    <span class="muted" id="shot-note">What the clock is showing now.</span>
+  </div>
+  <div class="shot"><img id="shot-image" alt="The clock's screen"></div>
+</div>
+
 {% if data.problems %}
 <div class="card">
   <h2>Recent problems <span class="count">{{ data.problems|length }}</span></h2>

@@ -2983,18 +2983,25 @@ class RequestLineServer(QtCore.QObject):
         parsed = urlparse(parts[1])
         params = dict(parse_qsl(parsed.query, keep_blank_values=True))
         try:
-            status = self.dispatch(parsed.path, params, peer)
+            answer = self.dispatch(parsed.path, params, peer)
         except Exception:
             print('WARNING:', traceback.format_exc())
-            status = '500 Internal Server Error'
-        self._respond(sock, status)
+            answer = '500 Internal Server Error'
+        # A handler may answer with (status, content type, bytes) when what it
+        # has to send is not text - a screenshot, for instance.
+        if isinstance(answer, tuple):
+            self._respond(sock, answer[0], answer[1], answer[2])
+        else:
+            self._respond(sock, answer)
 
-    def _respond(self, sock, status):
+    def _respond(self, sock, status, content_type='text/plain', payload=None):
         try:
-            body = status.split(' ', 1)[-1].encode('utf-8')
-            sock.write(('HTTP/1.1 %s\r\nContent-Type: text/plain\r\n'
+            if payload is None:
+                payload = status.split(' ', 1)[-1].encode('utf-8')
+            sock.write(('HTTP/1.1 %s\r\nContent-Type: %s\r\n'
                         'Content-Length: %d\r\nConnection: close\r\n\r\n'
-                        % (status, len(body))).encode('ascii') + body)
+                        % (status, content_type, len(payload))).encode('ascii')
+                       + payload)
             sock.flush()
             sock.disconnectFromHost()
         except Exception:
@@ -3058,6 +3065,18 @@ class CommandListener(RequestLineServer):
         if not hmac.compare_digest(sent, self._token):
             print('WARNING: command from %s ignored (wrong token)' % peer)
             return '403 Forbidden'
+
+        # Answered here rather than through COMMANDS because it replies with an
+        # image, and everything in that table answers with a line of text.
+        if params.get('do', '') == 'screenshot':
+            if not getattr(Config, 'web_screenshot_enabled', 1):
+                return '403 screenshots are switched off in Config.py'
+            try:
+                payload = screenshot_jpeg(params.get('w', ''))
+            except Exception:
+                print('WARNING:', traceback.format_exc())
+                return '500 could not take a screenshot'
+            return ('200 OK', 'image/jpeg', payload)
 
         name = params.get('do', '')
         ok, message = run_command(name, params)
@@ -3369,6 +3388,40 @@ def audio_status_text():
     if audio_last_error:
         return 'nothing is playing - the last one stopped: %s' % audio_last_error
     return 'nothing is playing'
+
+
+SCREENSHOT_QUALITY = 72
+SCREENSHOT_MAX_WIDTH = 1920
+
+
+def screenshot_jpeg(width=''):
+    """The clock's own window as JPEG bytes.
+
+    Grabbed from the widget rather than captured from the screen: no external
+    tool, nothing to install, the same code path on X11 and Wayland, and it
+    catches exactly the clock rather than whatever else is on the display.
+
+    Runs on the GUI thread - the command listener is driven by the Qt event
+    loop - which is where widget painting has to happen.
+
+    JPEG rather than PNG because this is a photograph-heavy screen that is
+    about to cross a network; a PNG of it runs to several megabytes.
+    """
+    try:
+        wanted = int(str(width).strip() or 0)
+    except ValueError:
+        wanted = 0
+    wanted = max(0, min(SCREENSHOT_MAX_WIDTH, wanted))
+
+    picture = w.grab()
+    if wanted and picture.width() > wanted:
+        picture = picture.scaledToWidth(
+            wanted, Qt.TransformationMode.SmoothTransformation)
+
+    buffer = QtCore.QBuffer()
+    buffer.open(QtCore.QIODevice.OpenModeFlag.WriteOnly)
+    picture.save(buffer, 'JPG', SCREENSHOT_QUALITY)
+    return bytes(buffer.data())
 
 
 def toggle_weather_radio():

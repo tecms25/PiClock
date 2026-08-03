@@ -103,6 +103,44 @@ def grouped():
     return out
 
 
+SCREENSHOT_TIMEOUT_SECONDS = 12
+
+
+def screenshot(port, token, width=960):
+    """The clock's screen as (content_type, bytes), or (None, message).
+
+    A longer timeout than the other commands: rendering and encoding a
+    full-screen image on a Pi is slower than answering a one-line question.
+    """
+    if not token:
+        return None, ('The command channel is not set up. Run '
+                      'web/set_password.py, then restart the clock.')
+    try:
+        width = max(0, min(1920, int(width)))
+    except (TypeError, ValueError):
+        width = 960
+    query = urllib.parse.urlencode({'token': token, 'do': 'screenshot',
+                                    'w': width})
+    url = 'http://127.0.0.1:%d/screenshot?%s' % (int(port), query)
+    try:
+        with urllib.request.urlopen(url, timeout=SCREENSHOT_TIMEOUT_SECONDS) as reply:
+            kind = reply.headers.get('Content-Type', '')
+            body = reply.read()
+        if not kind.startswith('image/'):
+            return None, (body.decode('utf-8', 'replace').strip()
+                          or 'The clock did not send an image.')
+        return kind, body
+    except urllib.error.HTTPError as exc:
+        try:
+            detail = exc.read().decode('utf-8', 'replace').strip()
+        except Exception:
+            detail = ''
+        return None, detail or 'The clock refused the screenshot.'
+    except (urllib.error.URLError, OSError):
+        return None, ('The clock is not answering on port %s, so there is no '
+                      'screen to capture.' % port)
+
+
 def send(name, port, token, stream=None):
     """Ask the running clock to do one thing. Returns (ok, message).
 
