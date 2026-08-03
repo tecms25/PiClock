@@ -16,6 +16,7 @@
   var stateBox = document.getElementById('service-state');
   var activity = document.getElementById('activity-rows');
   var activityCount = document.getElementById('activity-count');
+  var audioBox = document.getElementById('audio-state');
 
   function show(message, ok) {
     if (!flashBox) { return; }
@@ -30,6 +31,31 @@
     stateBox.textContent = active;
     stateBox.className = 'state ' + (
       !service.available ? 'unknown' : (active === 'active' ? 'good' : 'bad'));
+  }
+
+  function renderAudio(state) {
+    if (!audioBox || typeof state !== 'string') { return; }
+    audioBox.textContent = state;
+    audioBox.hidden = state === '';
+  }
+
+  /* A stream can fail a second or two after it starts, so the reply to the
+   * Play button is too early to be the last word. Ask the panel now and then
+   * instead of leaving a stale line on screen. Paused while the tab is hidden,
+   * because nobody is reading it and each poll asks the clock. */
+  function startAudioPolling() {
+    if (!audioBox) { return; }
+    setInterval(function () {
+      if (document.hidden) { return; }
+      fetch('/api/audio', {
+        headers: { 'Accept': 'application/json' },
+        credentials: 'same-origin'
+      }).then(function (r) {
+        return r.ok ? r.json() : null;
+      }).then(function (data) {
+        if (data) { renderAudio(data.state); }
+      }).catch(function () { /* a blip; the next poll can try again */ });
+    }, 5000);
   }
 
   function renderActivity(events) {
@@ -84,6 +110,7 @@
     }).then(function (data) {
       show(data.message || 'Done.', !!data.ok);
       renderState(data.service);
+      renderAudio(data.audio);
       renderActivity(data.events);
     }).catch(function () {
       show('Could not reach the panel. It may have restarted - reload the page.',
@@ -157,4 +184,6 @@
     event.preventDefault();
     submit(form);
   });
+
+  startAudioPolling();
 }());

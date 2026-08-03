@@ -208,13 +208,9 @@ def create_app(settings=None, secrets_path=SECRETS, audit_db=AUDIT_DB):
                                available=control.available(),
                                live=commands.grouped(),
                                streams=commands.streams(),
-                               # Asked of the clock as the page is built, so a
-                               # stream that died after "playing ..." was
-                               # reported does not leave that standing.
-                               audio_state=commands.send(
-                                   'audio_status',
-                                   settings.get('web_command_port', 8128),
-                                   app.config['COMMAND_TOKEN'])[1],
+                               # Asked of the clock as the page is built; the
+                               # page then polls /api/audio to keep it current.
+                               audio_state=audio_state(),
                                service=status.service_status(),
                                events=audit.recent(audit_db))
 
@@ -250,6 +246,7 @@ def create_app(settings=None, secrets_path=SECRETS, audit_db=AUDIT_DB):
         """
         if wants_json():
             return jsonify({'ok': ok, 'message': message,
+                            'audio': audio_state(),
                             'service': status.service_status(),
                             'events': audit.recent(audit_db)})
         flash(message, 'ok' if ok else 'error')
@@ -295,6 +292,21 @@ def create_app(settings=None, secrets_path=SECRETS, audit_db=AUDIT_DB):
         audit.record(audit_db, caller(), 'restore config',
                      'ok' if ok else 'failed', message)
         return outcome(ok, message, url_for('settings_page'))
+
+    def audio_state():
+        return commands.send('audio_status',
+                             settings.get('web_command_port', 8128),
+                             app.config['COMMAND_TOKEN'])[1]
+
+    @app.route('/api/audio')
+    def api_audio():
+        """Just the audio line, small enough for the page to poll.
+
+        A stream can fail a second or two after it was started, which the
+        response to the Play button is too early to know about - so the page
+        keeps asking rather than showing whatever was true at the time.
+        """
+        return jsonify({'state': audio_state()})
 
     @app.route('/api/status')
     def api_status():

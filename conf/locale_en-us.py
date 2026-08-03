@@ -209,6 +209,11 @@ Lmoon8 = 'Waning Crescent'
 # The red bubble, and the panel that opens when you tap it.
 LAlertGeneric = 'Alert'                    # when the feed names no event type
 LAlertUntil = '  ·  until {0:%-I:%M %p}'   # appended to the alert headline
+# The bubble turns orange when the event name contains this, and stays red
+# otherwise. NOAA sends event names in English whatever language the clock is
+# set to, so translating this is only useful if you also feed it translated
+# alerts from somewhere else.
+LAlertWatchWord = 'Watch'
 LAlertEffective = 'Effective {0:%a %-I:%M %p}'
 LAlertExpires = 'Until {0:%a %-I:%M %p}'
 LAlertInstruction = 'WHAT TO DO:'          # heading above the advice text

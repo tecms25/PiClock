@@ -41,14 +41,13 @@ CATALOGUE = (
     {'name': 'slideshow_toggle', 'label': 'Pause / resume', 'key': 'F8',
      'describe': 'Hold the slideshow on the current photo, or start it again.',
      'group': 'Slideshow'},
-    {'name': 'radio_toggle', 'label': 'Toggle first stream', 'key': 'F2',
-     'describe': 'Start or stop the first audio stream - what F2 does on the '
-                 'clock itself.',
-     'group': 'Audio'},
 )
 
+# Commands that are accepted but have no button. radio_toggle is what F2 does
+# on the clock; the Audio streams card does the same job with a named stream,
+# so a second control for "whichever one is first" is only confusing.
 NAMES = frozenset(entry['name'] for entry in CATALOGUE) | {
-    'audio_play', 'audio_stop', 'audio_status'}
+    'audio_play', 'audio_stop', 'audio_status', 'radio_toggle'}
 
 
 def streams():
@@ -91,9 +90,17 @@ TIMEOUT_SECONDS = 4
 
 
 def grouped():
-    """The catalogue as (group, [commands]) for the page."""
-    return [(group, [c for c in CATALOGUE if c['group'] == group])
-            for group in GROUPS]
+    """The catalogue as (group, [commands]) for the page.
+
+    Groups with nothing left in them are dropped, so removing the last command
+    from one does not leave a bare heading behind.
+    """
+    out = []
+    for group in GROUPS:
+        items = [c for c in CATALOGUE if c['group'] == group]
+        if items:
+            out.append((group, items))
+    return out
 
 
 def send(name, port, token, stream=None):

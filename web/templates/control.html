@@ -56,7 +56,7 @@
 
 <div class="card">
   <h2>Audio streams <span class="count">{{ streams|length }}</span></h2>
-  {% if audio_state %}<p class="state-line">{{ audio_state }}</p>{% endif %}
+  <p class="state-line" id="audio-state" {% if not audio_state %}hidden{% endif %}>{{ audio_state }}</p>
   {% if streams %}
   <p class="muted">Played through the Pi's own speakers. One at a time -
     starting another swaps it over. While something is playing the clock shows

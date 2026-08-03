@@ -1931,9 +1931,13 @@ class InfoBubble(QtWidgets.QFrame):
         QtWidgets.QFrame.__init__(self, parent)
         self.setObjectName(name)
         self.setGeometry(rect)
-        self.setStyleSheet(
-            '#%s { background-color: %s; border-radius: %dpx; }'
-            % (name, background, int(rect.height() / 3.2)))
+        # Kept so the colour can be changed per item later - a severe weather
+        # watch and a warning are not the same thing and should not look it.
+        self._name = name
+        self._radius = int(rect.height() / 3.2)
+        self._background = background
+        self._showing_background = background
+        self._apply_background(background)
 
         pad_x = int(rect.width() * 0.05)
         title_style = (
@@ -2109,10 +2113,23 @@ class InfoBubble(QtWidgets.QFrame):
             self.index = (self.index + 1) % len(self.items)
             self._show_current()
 
+    def _apply_background(self, background):
+        self.setStyleSheet('#%s { background-color: %s; border-radius: %dpx; }'
+                           % (self._name, background, self._radius))
+
+    def item_background(self, item):
+        """Colour for this item, or None to keep the bubble's usual one."""
+        return None
+
     def _render(self):
         """Put the current item on screen without touching its dwell."""
+        item = self.items[self.index]
+        wanted = self.item_background(item) or self._background
+        if wanted != self._showing_background:
+            self._showing_background = wanted
+            self._apply_background(wanted)
         title, ticker_text = self.format_item(
-            self.items[self.index], self.index + 1, len(self.items))
+            item, self.index + 1, len(self.items))
         self.title_label.setText(title)
         self.ticker.set_text(ticker_text, self._ticker_style)
 
@@ -2153,14 +2170,35 @@ class InfoBubble(QtWidgets.QFrame):
 
 
 class AlertBubble(InfoBubble):
-    """Red warning bar for active NOAA/NWS severe weather alerts (see
-    get_noaa_alerts()). Tap it for the full alert text."""
+    """Warning bar for active NOAA/NWS severe weather alerts (see
+    get_noaa_alerts()). Tap it for the full alert text.
+
+    Red for a warning - something is happening - and orange for a watch, where
+    conditions are only favourable for it. That is the distinction the NWS
+    draws, and one colour for both loses it.
+    """
+
+    WARNING_COLOUR = 'rgba(190, 20, 20, 195)'
+    WATCH_COLOUR = 'rgba(205, 110, 15, 195)'
 
     def __init__(self, parent, rect, detail_panel):
         InfoBubble.__init__(self, parent, rect, 'alertBubble',
-                            'rgba(190, 20, 20, 195)', '#FFE2E2')
+                            self.WARNING_COLOUR, '#FFE2E2')
         self.detail_panel = detail_panel
         self.setCursor(Qt.CursorShape.PointingHandCursor)
+
+    def item_background(self, alert):
+        """Orange for a watch, red for everything else.
+
+        Matched on the NWS event name, which is always English whatever
+        language the clock is set to - these come from the NOAA API, not from
+        the locale file. Anything unrecognised stays red: a colour that
+        understates an alert is worse than one that overstates it.
+        """
+        event = str(alert.get('event') or '')
+        if Locale.LAlertWatchWord.lower() in event.lower():
+            return self.WATCH_COLOUR
+        return self.WARNING_COLOUR
 
     @property
     def alerts(self):
