@@ -3300,6 +3300,11 @@ PIPE_PLAYERS = (
 )
 
 
+# Mirrors EXIT_UNSUPPORTED in hls_fetch.py: a playlist it understands but does
+# not implement, as opposed to a fetch that failed.
+HLS_FETCH_UNSUPPORTED = 3
+
+
 def hls_fetch_argv(url, headers):
     """curl-backed fetcher, or None if curl is not installed."""
     if not shutil.which('curl'):
@@ -3329,7 +3334,7 @@ def streamlink_argv(url, headers):
     return argv + ['hls://' + url, 'best']
 
 
-def audio_pipeline(url, headers=None):
+def audio_pipeline(url, headers=None, prefer_streamlink=False):
     """The command(s) to play this URL, or None if nothing here can.
 
     Usually one command. For HLS it is two: something fetches the stream and
@@ -3343,16 +3348,22 @@ def audio_pipeline(url, headers=None):
     streamlink is built on requests. curl is accepted, so hls_fetch.py walks
     the playlist and lets curl do every fetch.
 
-    streamlink stays as a fallback for hosts that do not care, where it
-    handles more of HLS than the small fetcher does.
+    streamlink stays as the fallback, for hosts that do not care and for the
+    parts of HLS the small fetcher does not implement - encrypted segments,
+    fMP4 init segments, byte ranges. prefer_streamlink is how a caller asks
+    for it after hls_fetch.py has reported one of those (see
+    check_audio_player), rather than guessing up front.
     """
     headers = headers or {}
     if is_hls(url):
         for name, base in PIPE_PLAYERS:
             if not shutil.which(name):
                 continue
-            fetch = (hls_fetch_argv(url, headers)
-                     or streamlink_argv(url, headers))
+            if prefer_streamlink:
+                fetch = streamlink_argv(url, headers)
+            else:
+                fetch = (hls_fetch_argv(url, headers)
+                         or streamlink_argv(url, headers))
             if fetch:
                 return [fetch, list(base)]
             break
@@ -3467,9 +3478,13 @@ def stop_audio_stream():
     return 'stopped %s' % was
 
 
-def play_audio_stream(index):
-    """Start one stream by index, stopping anything already playing."""
-    global audio_player, audio_index
+def play_audio_stream(index, prefer_streamlink=False):
+    """Start one stream by index, stopping anything already playing.
+
+    prefer_streamlink skips hls_fetch.py, for the second attempt at a stream
+    it has already reported it cannot handle.
+    """
+    global audio_player, audio_index, audio_fallback_used
     streams = audio_streams()
     try:
         index = int(index)
@@ -3481,7 +3496,8 @@ def play_audio_stream(index):
     stream = streams[index]
     pipeline = audio_pipeline(stream['url'],
                               {'user_agent': stream.get('user_agent', ''),
-                               'referer': stream.get('referer', '')})
+                               'referer': stream.get('referer', '')},
+                              prefer_streamlink=prefer_streamlink)
     if pipeline is None:
         if is_hls(stream['url']):
             return False, (Locale.LAudioNoHlsPlayer % stream['name'])
@@ -3520,10 +3536,59 @@ def play_audio_stream(index):
         return False, 'could not start %s: %s' % (stream['name'], exc)
     audio_index = index
     audio_started = time.monotonic()
+    # Set here rather than cleared on success, so a fresh play from the panel
+    # always gets its own attempt at the fetcher, and only the retry that
+    # already used streamlink is marked as having spent it.
+    audio_fallback_used = prefer_streamlink
     print('INFO: playing %s with %s'
-          % (stream['name'], ' | '.join(argv[0] for argv in pipeline)))
+          % (stream['name'], ' | '.join(command_label(argv)
+                                        for argv in pipeline)))
     update_audio_indicator()
     return True, 'playing %s' % stream['name']
+
+
+def command_label(argv):
+    """What to call this command in the log.
+
+    The interpreter's own name is useless here - "python3 | ffplay" does not
+    say whether the curl fetcher or streamlink is doing the work, which is the
+    one thing worth knowing when a stream misbehaves.
+    """
+    if len(argv) > 1 and argv[1].endswith('.py'):
+        return os.path.basename(argv[1])
+    return os.path.basename(argv[0])
+
+
+def retry_with_streamlink():
+    """Restart the current stream using streamlink. True if it was started.
+
+    Called when hls_fetch.py has reported a playlist beyond what it
+    implements. False means the retry is not available, and the caller
+    reports the original failure instead of silently doing nothing.
+    """
+    global audio_last_error
+    index = audio_index
+    if index is None:
+        return False
+    detail = audio_error_text()
+    if not shutil.which('streamlink'):
+        # Said plainly and once: this is the whole reason streamlink is worth
+        # having installed, and "stream stopped" on its own would send anyone
+        # looking at the network or the host instead.
+        audio_last_error = ('%s - streamlink handles this and is not '
+                            'installed (sudo apt install streamlink)'
+                            % (detail or 'this stream needs a fuller HLS '
+                               'client'))
+        print('ERROR: %s' % audio_last_error)
+        return False
+    print('INFO: %s; retrying with streamlink' % (detail or 'unsupported playlist'))
+    _stop_audio_processes()
+    _close_audio_errors()
+    ok, message = play_audio_stream(index, prefer_streamlink=True)
+    if not ok:
+        audio_last_error = message
+        print('ERROR: streamlink retry failed: %s' % message)
+    return ok
 
 
 def check_audio_player():
@@ -3539,13 +3604,31 @@ def check_audio_player():
     # Either end going down takes the stream with it: a dead feeder leaves the
     # player with nothing to decode, and a dead player leaves the feeder
     # writing into a pipe nobody reads.
+    #
+    # The feeder is polled unconditionally rather than only when the player is
+    # still up. A feeder that exits closes the pipe, so the player is often
+    # gone by the time this runs a second later, and reading only the player's
+    # status would lose the feeder's - which is the one that says why.
     which = 'player'
     code = audio_player.poll()
-    if code is None and audio_feeder is not None:
-        code = audio_feeder.poll()
-        which = 'fetcher'
+    feeder_code = audio_feeder.poll() if audio_feeder is not None else None
+    if code is None and feeder_code is not None:
+        code, which = feeder_code, 'fetcher'
     if code is None:
         return
+
+    explained = ''
+    if feeder_code == HLS_FETCH_UNSUPPORTED and not audio_fallback_used:
+        # A playlist hls_fetch.py understands but does not implement. Nothing
+        # is wrong with the stream or the network, so this is worth a second
+        # attempt with the client that handles the rest of HLS.
+        if retry_with_streamlink():
+            return
+        # It could not, and has already said exactly why - keep that. The
+        # generic wording below would replace "streamlink handles this and is
+        # not installed" with "the player exited with status 0", which is
+        # true, useless, and the reason this whole path exists.
+        explained = audio_last_error
 
     name = audio_playing_name() or 'unknown'
     ran_for = time.monotonic() - audio_started
@@ -3555,10 +3638,11 @@ def check_audio_player():
         # Naming the end that went first matters: a fetcher refused by the
         # host and a player that cannot decode look identical downstream,
         # because the player's complaint is the only one either way.
-        audio_last_error = detail or ('the %s exited with status %s and said '
-                                      'nothing' % (which, code))
-        print('ERROR: %s stopped after %.1fs (%s exited %s): %s'
-              % (name, ran_for, which, code, audio_last_error))
+        audio_last_error = explained or detail or (
+            'the %s exited with status %s and said nothing' % (which, code))
+        if not explained:
+            print('ERROR: %s stopped after %.1fs (%s exited %s): %s'
+                  % (name, ran_for, which, code, audio_last_error))
     else:
         audio_last_error = ''
         print('INFO: audio stream ended (%s) after %.0fs%s'
@@ -5355,6 +5439,7 @@ audio_index = None     # which entry of audio_streams() it is
 audio_started = 0.0    # when it started, to tell a failure from an ending
 audio_errors = None    # temp file collecting the player's stderr
 audio_last_error = ''  # why the last one stopped, for the control panel
+audio_fallback_used = False  # the streamlink retry has been spent on this one
 lastkeytime = 0
 last_brightness_percent = -1
 flighttimer = None

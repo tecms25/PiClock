@@ -826,28 +826,63 @@ does nothing on a muted device just looks broken. It works whether or not the
 clock is running, and follows a change made elsewhere within a few seconds.
 
 Only one stream plays at a time - starting another swaps it over - and while
-one is playing **the clock shows a small `▶ <name>` marker near the top**,
-which stays visible even with the clock face hidden by F9. F2 still toggles the
+one is playing **the clock shows a small badge near the top** with a moving
+equalizer and the stream name. It stays visible even with the clock face
+hidden by F9. The badge sits in the same slot as the severe weather and
+aircraft bubbles when that slot is free, and slides below whichever of them is
+showing, so it never floats in the middle of nothing. F2 still toggles the
 first stream from the keyboard.
+
+The equalizer is decoration, not a level meter: the audio is decoded by a
+separate player process writing straight to the sound device, so nothing in
+the clock ever sees a sample. It moves whenever a stream is playing, including
+through the silence between transmissions on a scanner feed.
 
 **A scanner feed almost always needs more than mpg123.** An `.m3u8` is an HLS
 playlist of segments, not an MP3 stream, and mpg123 cannot follow one. PiClock
 uses the first of `ffplay`, `mpv`, `cvlc` or `mpg123` that is installed and can
 handle the URL.
 
-**Some hosts refuse ffmpeg outright.** Broadcastify is one: it answers `curl`
-and `wget` with 200 and ffmpeg, VLC and python-urllib with **403 Forbidden**,
-whatever User-Agent, Referer or other headers they send - so no setting fixes
-it. `streamlink` is accepted, so PiClock uses it to fetch any `.m3u8` when it
-is installed, and pipes plain MPEG-TS to ffplay. ffmpeg then never talks to the
-host at all. If a feed returns 403:
+**Some hosts refuse the player outright.** Broadcastify is one, and it does it
+below HTTP: it fingerprints the **TLS handshake**, not anything in the request.
+It answers `curl` with 200 and Python's own TLS stack with **403 Forbidden**
+for the same URL, from the same address, with byte-identical headers and
+HTTP/1.1 forced on both. No User-Agent, Referer or other setting changes it,
+because none of those is what it is looking at. That refuses ffmpeg and VLC,
+and it refuses `streamlink` too, since streamlink is built on `requests`.
+
+curl is on the accepted side, so PiClock fetches HLS with
+`Clock/hls_fetch.py`: it walks the playlist itself, hands every request to
+curl, and pipes plain MPEG-TS to ffplay, which then never talks to the host at
+all. This is the default whenever curl is installed, which on Raspberry Pi OS
+it always is.
+
+**`streamlink` is the fallback**, and worth keeping installed. The small
+fetcher covers ordinary HLS - the segment playlists scanner feeds serve - but
+not three things streamlink handles:
+
+- AES-128 encrypted segments (`#EXT-X-KEY`)
+- fMP4/CMAF init segments (`#EXT-X-MAP`)
+- byte-range segments (`#EXT-X-BYTERANGE`)
+
+It recognises all three and stops rather than emitting bytes no player can
+decode, and PiClock then **restarts the stream on streamlink by itself** - once
+per stream, so a stream neither can play gives up instead of looping. You will
+see it in the log:
+
+```
+INFO: segments need an fMP4 init segment (#EXT-X-MAP) - needs a fuller HLS client; retrying with streamlink
+```
+
+If streamlink is not installed when that happens, the panel says exactly that
+rather than reporting a generic stopped stream:
 
 ```
 sudo apt install streamlink
 ```
 
-`install.sh` installs `ffmpeg` (which provides `ffplay`), `streamlink` and
-`mpg123`, and finishes by reporting what the machine can actually play, so
+`install.sh` installs `ffmpeg` (which provides `ffplay`), `curl`, `streamlink`
+and `mpg123`, and finishes by reporting what the machine can actually play, so
 there is normally nothing to do. To add a player later:
 
 ```

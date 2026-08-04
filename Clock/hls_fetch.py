@@ -20,6 +20,11 @@ import sys
 import time
 from urllib.parse import urljoin
 
+# Exit status meaning "this playlist is valid, but beyond what I implement".
+# Distinct from 1 (the fetch failed) so a caller can tell "try a different
+# client" apart from "this stream is not coming".
+EXIT_UNSUPPORTED = 3
+
 CURL_TIMEOUT = 15
 # Consecutive playlist failures tolerated before giving up. A live feed drops
 # the odd request; what matters is telling a blip apart from a dead stream.
@@ -75,17 +80,29 @@ def curl(url, headers):
     return done.stdout
 
 
+# Playlist features this fetcher does not implement. Each would need real
+# work - decryption, remuxing, ranged requests - and doing any of them badly
+# produces a stream that decodes to noise rather than one that fails. Naming
+# them here means the caller can hand the stream to a fuller HLS client
+# instead of shipping bytes no player can use.
+UNSUPPORTED = (
+    ('#EXT-X-MAP', 'segments need an fMP4 init segment (#EXT-X-MAP)'),
+    ('#EXT-X-BYTERANGE', 'segments are byte ranges (#EXT-X-BYTERANGE)'),
+)
+
+
 def parse_playlist(text, base):
     """Pull what matters out of a playlist.
 
-    Returns (uris, target_seconds, is_master, ended, encrypted). URIs come
-    back absolute, since a playlist may name segments relative to itself.
+    Returns (uris, target_seconds, is_master, ended, unsupported), where
+    unsupported is a reason string or None. URIs come back absolute, since a
+    playlist may name segments relative to itself.
     """
     uris = []
     target = 4.0
     is_master = False
     ended = False
-    encrypted = False
+    unsupported = None
     for raw in text.splitlines():
         line = raw.strip()
         if not line:
@@ -101,10 +118,15 @@ def parse_playlist(text, base):
             elif line.startswith('#EXT-X-ENDLIST'):
                 ended = True
             elif line.startswith('#EXT-X-KEY') and 'METHOD=NONE' not in line:
-                encrypted = True
+                unsupported = unsupported or 'stream is encrypted (#EXT-X-KEY)'
+            else:
+                for tag, reason in UNSUPPORTED:
+                    if line.startswith(tag):
+                        unsupported = unsupported or reason
+                        break
             continue
         uris.append(urljoin(base, line))
-    return uris, target, is_master, ended, encrypted
+    return uris, target, is_master, ended, unsupported
 
 
 def parse_args(argv):
@@ -178,12 +200,16 @@ def main(argv):
             time.sleep(2)
             continue
 
-        uris, target, _, ended, encrypted = parse_playlist(text, url)
-        if encrypted:
-            # Segments would need decrypting before a player could use them,
-            # and half-decoded audio is worse than a clear refusal.
-            log('stream is encrypted (#EXT-X-KEY); not supported')
-            return 1
+        uris, target, _, ended, unsupported = parse_playlist(text, url)
+        if unsupported:
+            # A distinct exit status, not a general failure: the caller can
+            # retry this stream with a fuller HLS client, which is a different
+            # response from "the host refused us" or "the network is down".
+            #
+            # Checked before any segment is written, so the handover starts
+            # from a clean stream rather than from part of one.
+            log('%s - needs a fuller HLS client' % unsupported)
+            return EXIT_UNSUPPORTED
 
         if first_pass:
             # Join near the live edge rather than replaying the window.
