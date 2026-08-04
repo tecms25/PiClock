@@ -2080,6 +2080,14 @@ class InfoBubble(QtWidgets.QFrame):
             self._suppressed = suppressed
             self._update_visibility()
 
+    def is_showing(self):
+        """True while this bubble is claiming its slot on screen.
+
+        Flips as the fade starts, not when it finishes, so anything moving out
+        of the way moves during the same half second rather than after it.
+        """
+        return self._shown
+
     def _update_visibility(self):
         want = bool(self.items) and not self._suppressed
         if want == self._shown:
@@ -2092,6 +2100,13 @@ class InfoBubble(QtWidgets.QFrame):
         else:
             self.cycle_timer.stop()
         self._fade(1.0 if want else 0.0)
+        # The audio badge parks under this slot while it is in use and rises
+        # into it when it is free. Looked up through globals() because the
+        # badge is built long after this class is defined - and is absent
+        # entirely while the bubbles themselves are still being constructed.
+        reposition = globals().get('update_audio_indicator')
+        if reposition is not None:
+            reposition()
 
     def _cycle(self):
         if self._leaving is not None:
@@ -2285,6 +2300,141 @@ class FlightBubble(InfoBubble):
         if craft['kind']:
             bits.append(craft['kind'].title())
         return title, Locale.LBulletWide.join(bits)
+
+
+class EqualizerBars(QtWidgets.QWidget):
+    """A row of bars that rise and fall while a stream is playing.
+
+    Decoration rather than a meter. The audio never passes through this
+    process - a separate player decodes it straight to the sound device, and
+    nothing here ever sees a sample - so there is no signal to measure. The
+    bars say "something is playing", which is what the text beside them says,
+    in a shape that reads without being read.
+
+    At rest they are flat.
+    """
+
+    BARS = 5
+    INTERVAL_MS = 110
+    # How much of its previous height each bar keeps per step. Different
+    # values per bar are the whole trick: with one value they rise and fall
+    # as a block, which reads as a blinking light rather than a level.
+    SMOOTHING = (0.55, 0.72, 0.44, 0.66, 0.5)
+    # The shortest a bar goes while playing. Kept clear of REST below, or the
+    # bottom of the animation is indistinguishable from a stopped meter.
+    FLOOR = 0.3
+
+    def __init__(self, parent, colour, bar_width, gap, bar_height):
+        QtWidgets.QWidget.__init__(self, parent)
+        self._colour = QtGui.QColor(colour)
+        self._bar_width = max(2, int(bar_width))
+        self._gap = max(1, int(gap))
+        self._levels = [0.0] * self.BARS
+        self._active = False
+        self.setFixedSize(
+            self.BARS * self._bar_width + (self.BARS - 1) * self._gap,
+            max(4, int(bar_height)))
+        self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+        self._timer = QtCore.QTimer(self)
+        self._timer.timeout.connect(self._step)
+
+    def set_active(self, active):
+        active = bool(active)
+        if active == self._active:
+            return
+        self._active = active
+        if active and not self._timer.isActive():
+            self._timer.start(self.INTERVAL_MS)
+        # Deliberately not stopped on the way down: _step keeps running until
+        # the bars have settled, so they sink rather than vanish mid-height.
+
+    def _step(self):
+        for i in range(self.BARS):
+            keep = self.SMOOTHING[i]
+            target = random.uniform(self.FLOOR, 1.0) if self._active else 0.0
+            self._levels[i] = self._levels[i] * keep + target * (1.0 - keep)
+        if not self._active and max(self._levels) < 0.02:
+            # Near enough the bottom to be indistinguishable from it. Snap the
+            # remainder off so flat is exactly flat - a decay curve never quite
+            # reaches zero - and stop spending a timer on a still picture.
+            self._levels = [0.0] * self.BARS
+            self._timer.stop()
+        self.update()
+
+    # Height of the meter at rest, as a fraction of the full height.
+    REST = 0.16
+
+    def paintEvent(self, event):
+        painter = QtGui.QPainter(self)
+        painter.setRenderHint(QtGui.QPainter.RenderHint.Antialiasing)
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(self._colour)
+        full = float(self.height())
+        # Softened corners rather than pill ends: a radius of half the bar
+        # width rounds a short bar into a circle.
+        radius = self._bar_width * 0.3
+        base = max(2.0, full * self.REST)
+
+        if not any(self._levels):
+            # Exactly at rest. Drawn as one continuous line rather than as
+            # five separate stubs, because five short stubs in a row read as
+            # an ellipsis - the reader sees punctuation, not a flat meter.
+            painter.drawRoundedRect(
+                QtCore.QRectF(0.0, full - base, float(self.width()), base),
+                radius, radius)
+            return
+
+        for i, level in enumerate(self._levels):
+            tall = max(base, full * level)
+            painter.drawRoundedRect(
+                QtCore.QRectF(i * (self._bar_width + self._gap), full - tall,
+                              self._bar_width, tall),
+                radius, radius)
+
+
+class AudioIndicator(QtWidgets.QFrame):
+    """The playing-now badge: an equalizer and the name of the stream.
+
+    A QFrame rather than a bare QWidget because the rounded background comes
+    from the stylesheet, and QWidget does not paint one without being told to.
+    """
+
+    def __init__(self, parent):
+        QtWidgets.QFrame.__init__(self, parent)
+        self.setObjectName('audioIndicator')
+        self.setStyleSheet(
+            '#audioIndicator { background-color: rgba(0, 0, 0, 150);'
+            ' border-radius: %dpx; }'
+            ' #audioIndicatorText { color: #f0f0f0; background: transparent;'
+            ' font-family:"Open Sans"; font-size: %dpx; %s }'
+            % (int(9 * xscale), int(20 * xscale * Config.fontmult),
+               Config.fontattr))
+        # Sized off the text, so the badge keeps its proportions at any
+        # resolution rather than needing a second set of numbers to tune.
+        text_px = int(20 * xscale * Config.fontmult)
+        self.bars = EqualizerBars(self, '#7ec8f0',
+                                  bar_width=max(3, int(text_px * 0.22)),
+                                  gap=max(2, int(text_px * 0.14)),
+                                  bar_height=int(text_px * 0.85))
+        self.label = QtWidgets.QLabel(self)
+        self.label.setObjectName('audioIndicatorText')
+        self.label.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+
+        row = QtWidgets.QHBoxLayout(self)
+        row.setContentsMargins(int(10 * xscale), int(4 * yscale),
+                               int(10 * xscale), int(4 * yscale))
+        row.setSpacing(int(8 * xscale))
+        row.addWidget(self.bars, 0, Qt.AlignmentFlag.AlignVCenter)
+        row.addWidget(self.label, 0, Qt.AlignmentFlag.AlignVCenter)
+
+        self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+        self.hide()
+
+    def set_text(self, text):
+        self.label.setText(text)
+
+    def set_active(self, active):
+        self.bars.set_active(active)
 
 
 class AlertDetailPanel(QtWidgets.QFrame):
@@ -5577,45 +5727,87 @@ flightBubble = FlightBubble(foreGround, alertrect)
 # clock with F9 to look at the photo does not also hide the one thing telling
 # you the radio is on.
 #
-# Centred just under the alert/flight bubble slot rather than in a corner: the
-# top right belongs to the forecast column and the top left to the current
-# conditions, so an indicator in either overlaps live text. The band under the
-# bubbles is background, and is already where this layout puts things that come
-# and go.
-audioIndicator = QtWidgets.QLabel(w)
-audioIndicator.setObjectName('audioIndicator')
-audioIndicator.setStyleSheet(
-    '#audioIndicator { font-family:"Open Sans"; color: #f0f0f0;'
-    ' background-color: rgba(0, 0, 0, 150); border-radius: %dpx;'
-    ' padding: %dpx %dpx; font-size: %dpx; %s }'
-    % (int(9 * xscale), int(4 * yscale), int(10 * xscale),
-       int(20 * xscale * Config.fontmult), Config.fontattr))
-audioIndicator.setAlignment(Qt.AlignmentFlag.AlignCenter)
-audioIndicator.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
-audioIndicator.hide()
+# Centred over the alert/flight bubble slot rather than in a corner: the top
+# right belongs to the forecast column and the top left to the current
+# conditions, so an indicator in either overlaps live text. That band is
+# background, and is already where this layout puts things that come and go.
+audioIndicator = AudioIndicator(w)
+
+# How far the badge drops to clear a bubble using the slot above it.
+AUDIO_INDICATOR_DROP = 8
+_audio_indicator_slide = None
+
+
+def bubble_slot_busy():
+    """True while a bubble is occupying the slot the badge would rather have.
+
+    isVisibleTo(w) covers F9: with the foreground hidden the bubbles are not
+    on screen whatever they think, and the badge - which is not hidden, being
+    a child of w - should take the space rather than avoid an empty one.
+    """
+    for bubble in (alertBubble, flightBubble):
+        if bubble.is_showing() and bubble.isVisibleTo(w):
+            return True
+    return False
+
+
+def audio_indicator_top():
+    """Where the badge sits vertically.
+
+    In the bubble slot when nothing else wants it, and just below when
+    something does. Left floating in the lower position full time it reads as
+    unmoored, because there is nothing above it to be below.
+    """
+    if Config.layout != 'photo':
+        # The classic layout keeps its bubble down by the footer, so the top
+        # of the screen is free and nothing ever contends for it.
+        return mac_notch_inset + int(12 * yscale)
+    top = mac_notch_inset + int(height * PHOTO_ALERT_TOP)
+    if bubble_slot_busy():
+        top += int(height * PHOTO_ALERT_H + AUDIO_INDICATOR_DROP * yscale)
+    return top
+
+
+def move_audio_indicator(target):
+    """Put the badge at `target`, gliding there if it is already on screen.
+
+    Half a second, matching the bubble fade, so a bubble clearing and the
+    badge rising into its place are one movement instead of a jump over
+    something still fading out.
+    """
+    global _audio_indicator_slide
+    if _audio_indicator_slide is not None:
+        _audio_indicator_slide.stop()
+        _audio_indicator_slide.deleteLater()
+        _audio_indicator_slide = None
+    if not audioIndicator.isVisible() or audioIndicator.geometry() == target:
+        audioIndicator.setGeometry(target)
+        return
+    anim = QtCore.QPropertyAnimation(audioIndicator, b'geometry',
+                                     audioIndicator)
+    anim.setDuration(500)
+    anim.setStartValue(audioIndicator.geometry())
+    anim.setEndValue(target)
+    anim.setEasingCurve(QtCore.QEasingCurve.Type.InOutCubic)
+    _audio_indicator_slide = anim
+    anim.start()
 
 
 def update_audio_indicator():
-    """Show what is playing, or hide when nothing is."""
+    """Show what is playing, where it fits, or hide when nothing is."""
     name = audio_playing_name()
     if not name:
+        audioIndicator.set_active(False)
         audioIndicator.hide()
         return
-    audioIndicator.setText(Locale.LAudioPlaying % name)
-    # Sized to its text and centred, capped at the bubble width so a long
+    audioIndicator.set_text(Locale.LAudioPlaying % name)
+    # Sized to its contents and centred, capped at the bubble width so a long
     # stream name cannot run past the edges of the band it sits in.
-    audioIndicator.adjustSize()
-    span = min(audioIndicator.width(), int(width * ALERT_W))
-    if Config.layout == 'photo':
-        # Under the bubbles, which sit at the top in this layout.
-        top = mac_notch_inset + int(height * (PHOTO_ALERT_TOP + PHOTO_ALERT_H)
-                                    + 8 * yscale)
-    else:
-        # The classic layout keeps its bubble down by the footer, so the top of
-        # the screen is free.
-        top = mac_notch_inset + int(12 * yscale)
-    audioIndicator.setGeometry(int((width - span) / 2), top,
-                               span, audioIndicator.height())
+    span = min(audioIndicator.sizeHint().width(), int(width * ALERT_W))
+    move_audio_indicator(QtCore.QRect(
+        int((width - span) / 2), audio_indicator_top(),
+        span, audioIndicator.sizeHint().height()))
+    audioIndicator.set_active(True)
     audioIndicator.raise_()
     audioIndicator.show()
 
