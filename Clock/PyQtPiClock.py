@@ -38,6 +38,10 @@ sys.dont_write_bytecode = True
 REPO_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 CONF_DIR = os.path.join(REPO_DIR, 'conf')
 LOG_DIR = os.path.join(REPO_DIR, 'logs')
+# Helper script, not a module: it runs as its own process feeding the audio
+# player, and must not import anything this process has loaded.
+HLS_FETCHER = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                           'hls_fetch.py')
 if CONF_DIR not in sys.path:
     sys.path.insert(0, CONF_DIR)
 
@@ -3296,31 +3300,62 @@ PIPE_PLAYERS = (
 )
 
 
+def hls_fetch_argv(url, headers):
+    """curl-backed fetcher, or None if curl is not installed."""
+    if not shutil.which('curl'):
+        return None
+    argv = [sys.executable or 'python3', HLS_FETCHER, url]
+    for field, flag in (('user_agent', '--user-agent'),
+                        ('referer', '--referer')):
+        if headers.get(field):
+            argv += [flag, headers[field]]
+    return argv
+
+
+def streamlink_argv(url, headers):
+    """streamlink fetcher, or None if it is not installed."""
+    if not shutil.which('streamlink'):
+        return None
+    # --loglevel error, not --quiet: --quiet hides the reason a fetch failed,
+    # which leaves the player downstream complaining about invalid data and no
+    # way to see that the fetch was refused. With --stdout the stream goes to
+    # stdout and the log to stderr, so this cannot corrupt the audio.
+    argv = ['streamlink', '--loglevel', 'error', '--stdout']
+    for field, header in (('user_agent', 'User-Agent'),
+                          ('referer', 'Referer')):
+        if headers.get(field):
+            argv += ['--http-header', '%s=%s' % (header, headers[field])]
+    # hls:// forces the plain HLS handler rather than site plugins.
+    return argv + ['hls://' + url, 'best']
+
+
 def audio_pipeline(url, headers=None):
     """The command(s) to play this URL, or None if nothing here can.
 
-    Usually one command. For HLS it is two when streamlink is installed:
-    streamlink fetches the stream and pipes plain MPEG-TS to a player.
+    Usually one command. For HLS it is two: something fetches the stream and
+    pipes plain MPEG-TS to a player that only has to decode it.
 
-    That indirection exists because some hosts refuse ffmpeg's connection
-    outright - Broadcastify answers curl and wget with 200 and ffmpeg, VLC and
-    python-urllib with 403, whatever headers they send. streamlink does its own
-    HTTP and is accepted, so letting it do the fetching sidesteps a block that
-    cannot be argued with from the ffmpeg side.
+    That indirection exists because some hosts refuse the player's connection
+    outright. Broadcastify fingerprints the TLS handshake rather than anything
+    in the request - it answers curl with 200 and Python's own TLS stack with
+    403 for the same URL, from the same address, with byte-identical headers.
+    That refuses ffmpeg and VLC, and it refuses streamlink too, since
+    streamlink is built on requests. curl is accepted, so hls_fetch.py walks
+    the playlist and lets curl do every fetch.
+
+    streamlink stays as a fallback for hosts that do not care, where it
+    handles more of HLS than the small fetcher does.
     """
     headers = headers or {}
-    if is_hls(url) and shutil.which('streamlink'):
+    if is_hls(url):
         for name, base in PIPE_PLAYERS:
             if not shutil.which(name):
                 continue
-            fetch = ['streamlink', '--quiet', '--stdout']
-            for field, header in (('user_agent', 'User-Agent'),
-                                  ('referer', 'Referer')):
-                if headers.get(field):
-                    fetch += ['--http-header', '%s=%s' % (header, headers[field])]
-            # hls:// forces the plain HLS handler rather than site plugins.
-            fetch += ['hls://' + url, 'best']
-            return [fetch, list(base)]
+            fetch = (hls_fetch_argv(url, headers)
+                     or streamlink_argv(url, headers))
+            if fetch:
+                return [fetch, list(base)]
+            break
     argv = audio_player_argv(url, headers)
     return [argv] if argv else None
 
@@ -3504,9 +3539,11 @@ def check_audio_player():
     # Either end going down takes the stream with it: a dead feeder leaves the
     # player with nothing to decode, and a dead player leaves the feeder
     # writing into a pipe nobody reads.
+    which = 'player'
     code = audio_player.poll()
     if code is None and audio_feeder is not None:
         code = audio_feeder.poll()
+        which = 'fetcher'
     if code is None:
         return
 
@@ -3515,10 +3552,13 @@ def check_audio_player():
     detail = audio_error_text()
     if ran_for < AUDIO_STARTUP_SECONDS:
         # Too soon to have been playing; this is a failure, not an ending.
-        audio_last_error = detail or ('the player exited with status %s and '
-                                      'said nothing' % code)
-        print('ERROR: %s stopped after %.1fs: %s' % (name, ran_for,
-                                                     audio_last_error))
+        # Naming the end that went first matters: a fetcher refused by the
+        # host and a player that cannot decode look identical downstream,
+        # because the player's complaint is the only one either way.
+        audio_last_error = detail or ('the %s exited with status %s and said '
+                                      'nothing' % (which, code))
+        print('ERROR: %s stopped after %.1fs (%s exited %s): %s'
+              % (name, ran_for, which, code, audio_last_error))
     else:
         audio_last_error = ''
         print('INFO: audio stream ended (%s) after %.0fs%s'

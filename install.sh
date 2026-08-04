@@ -267,10 +267,10 @@ if [ "$OS_NAME" = "Linux" ] && command -v apt-get >/dev/null 2>&1; then
   # ffmpeg supplies ffplay, which is what plays a scanner or internet radio
   # feed: those are nearly always .m3u8, and mpg123 cannot follow an HLS
   # playlist. mpg123 stays for plain MP3 streams like NOAA weather radio.
-  read -r -p "Install/update system packages (python3-full, python3-pyqt6, mpg123, ffmpeg, streamlink) via apt? [Y/n] " REPLY
+  read -r -p "Install/update system packages (python3-full, python3-pyqt6, mpg123, ffmpeg, streamlink, curl) via apt? [Y/n] " REPLY
   if [ "$REPLY" != "n" ] && [ "$REPLY" != "N" ]; then
     sudo apt update
-    sudo apt install -y python3-full python3-pyqt6 mpg123 ffmpeg streamlink
+    sudo apt install -y python3-full python3-pyqt6 mpg123 ffmpeg streamlink curl
     USE_SYSTEM_SITE_PACKAGES=1
   fi
 elif [ "$OS_NAME" = "Darwin" ] && command -v brew >/dev/null 2>&1; then
@@ -295,18 +295,21 @@ report_audio_players() {
     fi
   done
 
-  HAVE_SL=""
-  command -v streamlink >/dev/null 2>&1 && HAVE_SL="streamlink"
+  HAVE_CURL=""
+  command -v curl >/dev/null 2>&1 && HAVE_CURL="curl"
 
   echo ""
   if [ -n "$HAVE_HLS" ]; then
     echo "Audio: MP3 and .m3u8 (HLS) streams can both be played ($HAVE_HLS found)."
-    if [ -n "$HAVE_SL" ]; then
-      echo "       streamlink is installed, so feeds whose host refuses ffmpeg"
-      echo "       (Broadcastify scanners, for one) work too."
+    if [ -n "$HAVE_CURL" ]; then
+      echo "       curl is installed, so feeds whose host fingerprints the TLS"
+      echo "       handshake (Broadcastify scanners, for one) work too: those"
+      echo "       refuse ffmpeg, VLC and streamlink alike, and accept curl."
     else
-      echo "       Some hosts refuse ffmpeg's connection outright and answer 403."
-      echo "       If a feed does that, install streamlink: sudo apt install streamlink"
+      echo "       curl is NOT installed. Some hosts answer ffmpeg, VLC and"
+      echo "       streamlink with 403 no matter what headers they send, and"
+      echo "       curl is the one client they accept. Install it for those:"
+      echo "         sudo apt install curl"
     fi
   elif [ -n "$HAVE_MP3" ]; then
     echo "Audio: MP3 streams can be played (mpg123 found), but .m3u8 (HLS)"
