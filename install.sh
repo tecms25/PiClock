@@ -267,10 +267,10 @@ if [ "$OS_NAME" = "Linux" ] && command -v apt-get >/dev/null 2>&1; then
   # ffmpeg supplies ffplay, which is what plays a scanner or internet radio
   # feed: those are nearly always .m3u8, and mpg123 cannot follow an HLS
   # playlist. mpg123 stays for plain MP3 streams like NOAA weather radio.
-  read -r -p "Install/update system packages (python3-full, python3-pyqt6, mpg123, ffmpeg, streamlink, curl) via apt? [Y/n] " REPLY
+  read -r -p "Install/update system packages (python3-full, python3-pyqt6, mpg123, ffmpeg, streamlink, curl, pulseaudio-utils) via apt? [Y/n] " REPLY
   if [ "$REPLY" != "n" ] && [ "$REPLY" != "N" ]; then
     sudo apt update
-    sudo apt install -y python3-full python3-pyqt6 mpg123 ffmpeg streamlink curl
+    sudo apt install -y python3-full python3-pyqt6 mpg123 ffmpeg streamlink curl pulseaudio-utils
     USE_SYSTEM_SITE_PACKAGES=1
   fi
 elif [ "$OS_NAME" = "Darwin" ] && command -v brew >/dev/null 2>&1; then

@@ -2307,13 +2307,16 @@ class FlightBubble(InfoBubble):
 
 
 class EqualizerBars(QtWidgets.QWidget):
-    """A row of bars that rise and fall while a stream is playing.
+    """A row of bars that follow what is coming out of the speakers.
 
-    Decoration rather than a meter. The audio never passes through this
-    process - a separate player decodes it straight to the sound device, and
-    nothing here ever sees a sample - so there is no signal to measure. The
-    bars say "something is playing", which is what the text beside them says,
-    in a shape that reads without being read.
+    Given a level source (see OutputLevel) the bars track the real output, so
+    they go flat through the silence between transmissions on a scanner feed
+    and move only when there is something to hear.
+
+    Without one - no monitor tap available on this machine - they fall back to
+    animating whenever a stream is playing. That is decoration, and says only
+    what the text beside it already says, but it is honest about which mode it
+    is in: the fallback never claims silence it cannot detect.
 
     At rest they are flat.
     """
@@ -2324,17 +2327,27 @@ class EqualizerBars(QtWidgets.QWidget):
     # values per bar are the whole trick: with one value they rise and fall
     # as a block, which reads as a blinking light rather than a level.
     SMOOTHING = (0.55, 0.72, 0.44, 0.66, 0.5)
-    # The shortest a bar goes while playing. Kept clear of REST below, or the
-    # bottom of the animation is indistinguishable from a stopped meter.
+    # The shortest a bar goes in the animated fallback. Kept clear of REST
+    # below, or the bottom of the animation looks like a stopped meter.
     FLOOR = 0.3
+    # Relative height per bar when following a real level, so a single
+    # amplitude still reads as a meter rather than as one solid block. Taller
+    # in the middle, which is the shape a spectrum usually has.
+    WEIGHTS = (0.62, 0.86, 1.0, 0.8, 0.58)
+    # Peak level is unkind to speech: normal talking sits low and would barely
+    # lift the bars. This expands the quiet end without touching silence,
+    # since anything to a power still leaves zero at zero.
+    CURVE = 0.55
 
-    def __init__(self, parent, colour, bar_width, gap, bar_height):
+    def __init__(self, parent, colour, bar_width, gap, bar_height,
+                 level_source=None):
         QtWidgets.QWidget.__init__(self, parent)
         self._colour = QtGui.QColor(colour)
         self._bar_width = max(2, int(bar_width))
         self._gap = max(1, int(gap))
         self._levels = [0.0] * self.BARS
         self._active = False
+        self._level_source = level_source
         self.setFixedSize(
             self.BARS * self._bar_width + (self.BARS - 1) * self._gap,
             max(4, int(bar_height)))
@@ -2352,18 +2365,43 @@ class EqualizerBars(QtWidgets.QWidget):
         # Deliberately not stopped on the way down: _step keeps running until
         # the bars have settled, so they sink rather than vanish mid-height.
 
+    def _targets(self):
+        """Where each bar wants to be this step."""
+        if not self._active:
+            return [0.0] * self.BARS
+        level = self._level_source() if self._level_source else None
+        if level is None:
+            # No way to measure, so no claim about silence is made.
+            return [random.uniform(self.FLOOR, 1.0) for _ in range(self.BARS)]
+        shaped = level ** self.CURVE
+        # The wobble is multiplied in, never added, so silence stays exactly
+        # flat: at level zero every bar is zero however the dice fall.
+        return [min(1.0, shaped * w * random.uniform(0.82, 1.0))
+                for w in self.WEIGHTS]
+
     def _step(self):
+        targets = self._targets()
         for i in range(self.BARS):
             keep = self.SMOOTHING[i]
-            target = random.uniform(self.FLOOR, 1.0) if self._active else 0.0
-            self._levels[i] = self._levels[i] * keep + target * (1.0 - keep)
-        if not self._active and max(self._levels) < 0.02:
-            # Near enough the bottom to be indistinguishable from it. Snap the
-            # remainder off so flat is exactly flat - a decay curve never quite
-            # reaches zero - and stop spending a timer on a still picture.
-            self._levels = [0.0] * self.BARS
+            self._levels[i] = self._levels[i] * keep + targets[i] * (1.0 - keep)
+
+        if max(self._levels) >= 0.02:
+            self.update()
+            return
+
+        # Near enough the bottom to be indistinguishable from it. Snap the
+        # remainder off, because a decay curve never quite reaches zero and
+        # paintEvent draws the flat line only at exactly zero - otherwise
+        # silence comes out as five stubs, which reads as an ellipsis.
+        settled = not any(self._levels)
+        self._levels = [0.0] * self.BARS
+        if not self._active:
+            # Nothing playing: stop spending a timer on a still picture. While
+            # a stream IS playing the timer must keep running even through
+            # silence, or nothing would be left to notice the sound return.
             self._timer.stop()
-        self.update()
+        if not settled:
+            self.update()
 
     # Height of the meter at rest, as a fraction of the full height.
     REST = 0.16
@@ -2419,7 +2457,8 @@ class AudioIndicator(QtWidgets.QFrame):
         self.bars = EqualizerBars(self, '#7ec8f0',
                                   bar_width=max(3, int(text_px * 0.22)),
                                   gap=max(2, int(text_px * 0.14)),
-                                  bar_height=int(text_px * 0.85))
+                                  bar_height=int(text_px * 0.85),
+                                  level_source=output_level.level)
         self.label = QtWidgets.QLabel(self)
         self.label.setObjectName('audioIndicatorText')
         self.label.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
@@ -3452,7 +3491,7 @@ def _close_audio_errors():
 
 
 def _stop_audio_processes():
-    """Kill every process in the pipeline, feeder included."""
+    """Kill every process in the pipeline, feeder and level tap included."""
     global audio_player, audio_feeder
     for proc in (audio_player, audio_feeder):
         if proc is None:
@@ -3463,6 +3502,10 @@ def _stop_audio_processes():
             pass
     audio_player = None
     audio_feeder = None
+    # Here rather than only in stop_audio_stream(), so every path that tears
+    # the pipeline down - a stream ending, a player dying, the streamlink
+    # retry - takes the tap with it instead of leaving one per attempt.
+    output_level.stop()
 
 
 def stop_audio_stream():
@@ -3536,6 +3579,9 @@ def play_audio_stream(index, prefer_streamlink=False):
         return False, 'could not start %s: %s' % (stream['name'], exc)
     audio_index = index
     audio_started = time.monotonic()
+    # Started with the stream and stopped with it: there is nothing to listen
+    # to otherwise, and this is a process.
+    output_level.start()
     # Set here rather than cleared on success, so a fresh play from the panel
     # always gets its own attempt at the fetcher, and only the retry that
     # already used streamlink is marked as having spent it.
@@ -3545,6 +3591,128 @@ def play_audio_stream(index, prefer_streamlink=False):
                                         for argv in pipeline)))
     update_audio_indicator()
     return True, 'playing %s' % stream['name']
+
+
+# --- Real output level, for the equalizer ------------------------------------
+# The audio never passes through this process - a separate player decodes it
+# straight to the sound device - so the only way to know whether a sound is
+# actually being made is to listen to the sink the player writes to.
+#
+# This is a passive monitor tap: it observes the output and cannot affect it.
+# If this process stops reading, the tap blocks and nothing else notices; kill
+# it and the audio plays on. That property is the whole reason it is done this
+# way rather than by putting a level filter in the player's own pipeline,
+# where a reader that stalled would stall the audio with it.
+LEVEL_RATE = 8000        # ample for an amplitude envelope; this is not audio
+LEVEL_CHUNK = 8192
+# Below this the signal is silence with dither on top. Digital silence is not
+# reliably zero, and without a gate the bars sit permanently just off the
+# floor, which is the thing this replaced.
+LEVEL_GATE = 0.006
+
+
+def default_sink_monitor():
+    """The monitor source for the default output, or None."""
+    if not shutil.which('pactl'):
+        return None
+    try:
+        done = subprocess.run(['pactl', 'get-default-sink'],
+                              stdout=subprocess.PIPE,
+                              stderr=subprocess.DEVNULL, timeout=5)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    name = done.stdout.decode('utf-8', 'replace').strip()
+    if done.returncode != 0 or not name or ' ' in name:
+        return None
+    return name if name.endswith('.monitor') else name + '.monitor'
+
+
+class OutputLevel:
+    """Peak level of what the speakers are playing, 0.0 to 1.0.
+
+    level() returns None when no tap is available, which is the signal to the
+    equalizer to animate instead of pretending to measure something.
+    """
+
+    def __init__(self):
+        self.proc = None
+        self._announced = False
+
+    def start(self):
+        """Begin listening. Silently does nothing if it cannot."""
+        self.stop()
+        monitor = default_sink_monitor()
+        if not monitor or not shutil.which('parec'):
+            if not self._announced:
+                self._announced = True
+                print('INFO: no output monitor available (needs parec and '
+                      'pactl); the equalizer will animate rather than follow '
+                      'the audio')
+            return
+        argv = ['parec', '--format=s16le', '--rate=%d' % LEVEL_RATE,
+                '--channels=1', '--latency-msec=100', '-d', monitor]
+        try:
+            self.proc = Popen(argv, stdout=subprocess.PIPE,
+                              stderr=subprocess.DEVNULL)
+            os.set_blocking(self.proc.stdout.fileno(), False)
+        except (OSError, ValueError) as exc:
+            print('WARNING: could not start the output monitor: %s' % exc)
+            self.proc = None
+            return
+        if not self._announced:
+            self._announced = True
+            print('INFO: equalizer following the output level via %s' % monitor)
+
+    def stop(self):
+        if self.proc is None:
+            return
+        try:
+            self.proc.terminate()
+            self.proc.wait(timeout=2)
+        except (OSError, subprocess.SubprocessError):
+            pass
+        self.proc = None
+
+    def level(self):
+        """Peak since the last call, or None if nothing is being measured."""
+        if self.proc is None:
+            return None
+        if self.proc.poll() is not None:
+            # The tap died on its own. Say so once and fall back rather than
+            # leaving the bars frozen at whatever they last read.
+            print('WARNING: the output monitor stopped; the equalizer will '
+                  'animate instead')
+            self.proc = None
+            return None
+        fd = self.proc.stdout.fileno()
+        peak = 0.0
+        got = False
+        while True:
+            try:
+                chunk = os.read(fd, LEVEL_CHUNK)
+            except (BlockingIOError, InterruptedError):
+                break
+            except OSError:
+                self.proc = None
+                return None
+            if not chunk:
+                break
+            # cast() rather than the array module: no import, and s16le is
+            # native order on every machine this runs on.
+            samples = memoryview(chunk)[:len(chunk) - len(chunk) % 2].cast('h')
+            if len(samples):
+                got = True
+                # Magnitudes stay raw here and are normalised once at the end.
+                peak = max(peak, max(samples), -min(samples))
+        if not got:
+            # Nothing arrived this tick. Treat it as silence rather than
+            # holding the previous value, or a stopped feed reads as sound.
+            return 0.0
+        peak = min(1.0, peak / 32768.0)
+        return 0.0 if peak < LEVEL_GATE else peak
+
+
+output_level = OutputLevel()
 
 
 def command_label(argv):

@@ -833,10 +833,33 @@ aircraft bubbles when that slot is free, and slides below whichever of them is
 showing, so it never floats in the middle of nothing. F2 still toggles the
 first stream from the keyboard.
 
-The equalizer is decoration, not a level meter: the audio is decoded by a
-separate player process writing straight to the sound device, so nothing in
-the clock ever sees a sample. It moves whenever a stream is playing, including
-through the silence between transmissions on a scanner feed.
+**The equalizer follows the actual output**, so it goes flat through the
+silence between transmissions on a scanner feed and moves only when there is
+something to hear. The audio never passes through the clock - a separate
+player decodes it straight to the sound device - so the level is read from a
+passive tap on the output sink:
+
+```
+parec --format=s16le --rate=8000 --channels=1 -d <default-sink>.monitor
+```
+
+That is a listener, not a filter. It observes the output and cannot affect it:
+if it stalls or is killed the audio plays on, which is why the level is read
+this way rather than by putting a meter inside the player's own pipeline.
+
+It needs `parec` and `pactl`, both from `pulseaudio-utils`, which
+pipewire-pulse satisfies on Raspberry Pi OS Bookworm. Without them the bars
+fall back to animating whenever a stream is playing, and the log says which
+mode it is in at the first play:
+
+```
+INFO: equalizer following the output level via alsa_output.<...>.monitor
+INFO: no output monitor available (needs parec and pactl); the equalizer
+      will animate rather than follow the audio
+```
+
+The fallback never claims a silence it cannot detect - it simply moves the
+whole time a stream is playing.
 
 **A scanner feed almost always needs more than mpg123.** An `.m3u8` is an HLS
 playlist of segments, not an MP3 stream, and mpg123 cannot follow one. PiClock
