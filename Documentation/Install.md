@@ -825,13 +825,30 @@ and is hidden if none is installed. Moving it also unmutes, since a slider that
 does nothing on a muted device just looks broken. It works whether or not the
 clock is running, and follows a change made elsewhere within a few seconds.
 
-Only one stream plays at a time - starting another swaps it over - and while
-one is playing **the clock shows a small badge near the top** with a moving
-equalizer and the stream name. It stays visible even with the clock face
-hidden by F9. The badge sits in the same slot as the severe weather and
-aircraft bubbles when that slot is free, and slides below whichever of them is
-showing, so it never floats in the middle of nothing. F2 still toggles the
-first stream from the keyboard.
+Only one stream plays at a time - starting another swaps it over.
+
+**The clock shows a badge near the top, and the badge is the play button.**
+The play triangle is always there whenever any stream is configured; the
+equalizer and the stream name appear beside it while something is playing.
+Tapping cycles: first stream, then the next, and so on, then off and round
+again. It cycles rather than toggling one stream because `noaastream` is
+always first in the list, so a button that only ever reached the first one
+would never reach the scanner it was probably added for.
+
+The badge stays visible even with the clock face hidden by F9. It sits in the
+same slot as the severe weather and aircraft bubbles when that slot is free,
+and slides below whichever of them is showing, so it never floats in the
+middle of nothing. F2 still toggles the first stream from the keyboard.
+
+On a clock with no touchscreen the button is only decoration, so it can be
+turned off in `conf/Config.py`:
+
+```
+audio_button_enabled = 0   # 1 to make the audio badge a button, 0 for display only
+```
+
+With it off, the badge appears by itself whenever something is playing and is
+gone the rest of the time.
 
 **The equalizer follows the actual output**, so it goes flat through the
 silence between transmissions on a scanner feed and moves only when there is

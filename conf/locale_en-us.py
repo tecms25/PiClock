@@ -291,9 +291,11 @@ LBiNoContentType = 'no content type'
 
 # --- audio streams -----------------------------------------------------------
 # Shown in the corner of the screen while a stream is playing. %s is its name.
-# No play triangle: the equalizer beside it already says the same thing, and
-# two "it is playing" symbols on one small badge is one too many.
+# No play triangle while playing: the equalizer beside it already says the same
+# thing, and two "it is playing" symbols on one small badge is one too many.
 LAudioPlaying = '%s'
+# What the badge shows when nothing is playing and it is just a button.
+LAudioPlayGlyph = '▶'
 LNoaaRadio = 'NOAA weather radio'
 LAudioUnknown = 'a stream'
 LAudioNoPlayer = ('no audio player is installed - try "sudo apt install '

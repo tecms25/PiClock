@@ -2327,6 +2327,12 @@ class EqualizerBars(QtWidgets.QWidget):
     # values per bar are the whole trick: with one value they rise and fall
     # as a block, which reads as a blinking light rather than a level.
     SMOOTHING = (0.55, 0.72, 0.44, 0.66, 0.5)
+    # Rising is a different matter from falling. Meters climb almost at once
+    # and fall back gently; smoothing a rise the way a fall is smoothed is
+    # what makes one look sluggish, because a syllable is over long before a
+    # slow attack has climbed anywhere near it. Used only when following a
+    # real level - the animated fallback has no transients to catch.
+    ATTACK = (0.18, 0.3, 0.1, 0.26, 0.14)
     # The shortest a bar goes in the animated fallback. Kept clear of REST
     # below, or the bottom of the animation looks like a stopped meter.
     FLOOR = 0.3
@@ -2337,7 +2343,12 @@ class EqualizerBars(QtWidgets.QWidget):
     # Peak level is unkind to speech: normal talking sits low and would barely
     # lift the bars. This expands the quiet end without touching silence,
     # since anything to a power still leaves zero at zero.
-    CURVE = 0.55
+    CURVE = 0.5
+    # The tap listens after the volume control, so a clock turned down to a
+    # third reports a third of the level. Gain makes the meter about the
+    # audio rather than about the volume knob. Clamped, so loud simply pins
+    # the middle bars rather than overflowing.
+    GAIN = 2.2
 
     def __init__(self, parent, colour, bar_width, gap, bar_height,
                  level_source=None):
@@ -2366,23 +2377,25 @@ class EqualizerBars(QtWidgets.QWidget):
         # the bars have settled, so they sink rather than vanish mid-height.
 
     def _targets(self):
-        """Where each bar wants to be this step."""
+        """(where each bar wants to be, whether that came from real audio)."""
         if not self._active:
-            return [0.0] * self.BARS
+            return [0.0] * self.BARS, False
         level = self._level_source() if self._level_source else None
         if level is None:
             # No way to measure, so no claim about silence is made.
-            return [random.uniform(self.FLOOR, 1.0) for _ in range(self.BARS)]
-        shaped = level ** self.CURVE
+            return ([random.uniform(self.FLOOR, 1.0) for _ in range(self.BARS)],
+                    False)
+        shaped = min(1.0, level * self.GAIN) ** self.CURVE
         # The wobble is multiplied in, never added, so silence stays exactly
         # flat: at level zero every bar is zero however the dice fall.
-        return [min(1.0, shaped * w * random.uniform(0.82, 1.0))
-                for w in self.WEIGHTS]
+        return ([min(1.0, shaped * w * random.uniform(0.82, 1.0))
+                 for w in self.WEIGHTS], True)
 
     def _step(self):
-        targets = self._targets()
+        targets, live = self._targets()
         for i in range(self.BARS):
-            keep = self.SMOOTHING[i]
+            rising = live and targets[i] > self._levels[i]
+            keep = self.ATTACK[i] if rising else self.SMOOTHING[i]
             self._levels[i] = self._levels[i] * keep + targets[i] * (1.0 - keep)
 
         if max(self._levels) >= 0.02:
@@ -2403,8 +2416,11 @@ class EqualizerBars(QtWidgets.QWidget):
         if not settled:
             self.update()
 
-    # Height of the meter at rest, as a fraction of the full height.
-    REST = 0.16
+    # Height of a bar at rest, as a fraction of the full height. Tuned to
+    # land at roughly half the bar width: a rest bar has to be wider than it
+    # is tall to read as a flat bar. Square ones read as dots, and five dots
+    # in a row read as an ellipsis.
+    REST = 0.13
 
     def paintEvent(self, event):
         painter = QtGui.QPainter(self)
@@ -2412,22 +2428,18 @@ class EqualizerBars(QtWidgets.QWidget):
         painter.setPen(Qt.PenStyle.NoPen)
         painter.setBrush(self._colour)
         full = float(self.height())
-        # Softened corners rather than pill ends: a radius of half the bar
-        # width rounds a short bar into a circle.
-        radius = self._bar_width * 0.3
+        # Softened corners rather than pill ends, and never more than the bar
+        # can take: rounding fixed to the width turns a bar at rest into a
+        # blob, which is the dot problem by another name.
+        corner = self._bar_width * 0.3
         base = max(2.0, full * self.REST)
 
-        if not any(self._levels):
-            # Exactly at rest. Drawn as one continuous line rather than as
-            # five separate stubs, because five short stubs in a row read as
-            # an ellipsis - the reader sees punctuation, not a flat meter.
-            painter.drawRoundedRect(
-                QtCore.QRectF(0.0, full - base, float(self.width()), base),
-                radius, radius)
-            return
-
+        # Always five separate bars, at rest as much as in motion. Merging
+        # them into one line at rest was tried and reads as a rule drawn under
+        # the text rather than as a meter sitting still.
         for i, level in enumerate(self._levels):
             tall = max(base, full * level)
+            radius = min(corner, tall * 0.35)
             painter.drawRoundedRect(
                 QtCore.QRectF(i * (self._bar_width + self._gap), full - tall,
                               self._bar_width, tall),
@@ -2435,49 +2447,111 @@ class EqualizerBars(QtWidgets.QWidget):
 
 
 class AudioIndicator(QtWidgets.QFrame):
-    """The playing-now badge: an equalizer and the name of the stream.
+    """The audio badge, which is also the button that starts the audio.
+
+    Two states in one element rather than a separate control:
+
+      idle     a small play triangle on its own
+      playing  the equalizer and the name of the stream
+
+    One element because the photo layout exists to show the photograph, and a
+    permanent second widget earns its place less than a badge that is already
+    going to appear the moment anything plays.
 
     A QFrame rather than a bare QWidget because the rounded background comes
     from the stylesheet, and QWidget does not paint one without being told to.
     """
 
-    def __init__(self, parent):
+    # Ignore a second press this soon after the first. On a touchscreen a
+    # brushed finger reads as two taps, and two taps here means killing a
+    # player that has spent fifteen seconds connecting.
+    DEBOUNCE_MS = 600
+
+    def __init__(self, parent, on_press=None):
         QtWidgets.QFrame.__init__(self, parent)
         self.setObjectName('audioIndicator')
-        self.setStyleSheet(
-            '#audioIndicator { background-color: rgba(0, 0, 0, 150);'
-            ' border-radius: %dpx; }'
-            ' #audioIndicatorText { color: #f0f0f0; background: transparent;'
-            ' font-family:"Open Sans"; font-size: %dpx; %s }'
-            % (int(9 * xscale), int(20 * xscale * Config.fontmult),
-               Config.fontattr))
+        self._on_press = on_press
+        self._pressed_at = 0.0
+        self._playing = None          # forces the first style to be applied
+        text_px = int(20 * xscale * Config.fontmult)
+        self._radius = int(9 * xscale)
+        self._text_px = text_px
+
         # Sized off the text, so the badge keeps its proportions at any
         # resolution rather than needing a second set of numbers to tune.
-        text_px = int(20 * xscale * Config.fontmult)
         self.bars = EqualizerBars(self, '#7ec8f0',
-                                  bar_width=max(3, int(text_px * 0.22)),
+                                  bar_width=max(4, int(text_px * 0.26)),
                                   gap=max(2, int(text_px * 0.14)),
                                   bar_height=int(text_px * 0.85),
                                   level_source=output_level.level)
         self.label = QtWidgets.QLabel(self)
         self.label.setObjectName('audioIndicatorText')
-        self.label.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+        self.glyph = QtWidgets.QLabel(Locale.LAudioPlayGlyph, self)
+        self.glyph.setObjectName('audioIndicatorGlyph')
+        for child in (self.label, self.glyph):
+            # Clicks belong to the badge as a whole; a child that swallowed
+            # one would leave dead spots inside the button.
+            child.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
 
         row = QtWidgets.QHBoxLayout(self)
         row.setContentsMargins(int(10 * xscale), int(4 * yscale),
                                int(10 * xscale), int(4 * yscale))
         row.setSpacing(int(8 * xscale))
+        row.addWidget(self.glyph, 0, Qt.AlignmentFlag.AlignVCenter)
         row.addWidget(self.bars, 0, Qt.AlignmentFlag.AlignVCenter)
         row.addWidget(self.label, 0, Qt.AlignmentFlag.AlignVCenter)
 
-        self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.set_state('')
         self.hide()
 
-    def set_text(self, text):
-        self.label.setText(text)
+    def _style(self, playing):
+        # Fainter when idle: at rest this is a button nobody is looking at,
+        # sitting on top of a photograph. Once something is playing it is
+        # information, and reads at a glance.
+        background = 150 if playing else 105
+        return (
+            '#audioIndicator { background-color: rgba(0, 0, 0, %d);'
+            ' border-radius: %dpx; }'
+            ' #audioIndicatorText { color: #f0f0f0; background: transparent;'
+            ' font-family:"Open Sans"; font-size: %dpx; %s }'
+            ' #audioIndicatorGlyph { color: %s; background: transparent;'
+            ' font-size: %dpx; }'
+            % (background, self._radius, self._text_px, Config.fontattr,
+               '#e8e8e8' if playing else '#d0d8dc', self._text_px))
+
+    def set_state(self, name):
+        """'' for idle, otherwise the name of what is playing.
+
+        The play button itself is static: it stays put whether or not
+        something is playing, because it is the control, not the status. Only
+        the equalizer and the name come and go around it. Hidden widgets drop
+        out of the layout, so idle shrinks to just the button.
+        """
+        playing = bool(name)
+        if playing:
+            self.label.setText(name)
+        if playing == self._playing:
+            return
+        self._playing = playing
+        self.bars.setVisible(playing)
+        self.label.setVisible(playing)
+        self.setStyleSheet(self._style(playing))
+        self.adjustSize()
 
     def set_active(self, active):
         self.bars.set_active(active)
+
+    def mousePressEvent(self, event):
+        event.accept()
+        if event.button() != Qt.MouseButton.LeftButton:
+            return
+        now = time.monotonic()
+        if (now - self._pressed_at) * 1000 < self.DEBOUNCE_MS:
+            return
+        self._pressed_at = now
+        if self._on_press is not None:
+            self._on_press()
 
 
 class AlertDetailPanel(QtWidgets.QFrame):
@@ -6024,7 +6098,30 @@ flightBubble = FlightBubble(foreGround, alertrect)
 # right belongs to the forecast column and the top left to the current
 # conditions, so an indicator in either overlaps live text. That band is
 # background, and is already where this layout puts things that come and go.
-audioIndicator = AudioIndicator(w)
+def audio_button_pressed():
+    """Cycle the badge: each stream in turn, then off.
+
+    Cycling rather than toggling the first one, because the first one is
+    whatever noaastream is set to - audio_streams() puts it there - and on a
+    clock configured with both, a button that only ever reached NOAA weather
+    radio would never reach the scanner anyone actually added it for.
+    """
+    streams = audio_streams()
+    if not streams:
+        return
+    following = 0 if audio_index is None else audio_index + 1
+    if following >= len(streams):
+        print('INFO: audio button: %s' % stop_audio_stream())
+        return
+    ok, message = play_audio_stream(following)
+    print('%s: audio button: %s' % ('INFO' if ok else 'ERROR', message))
+    if not ok:
+        # Nothing started, so put the badge back to idle rather than leaving
+        # it showing a stream that is not playing.
+        update_audio_indicator()
+
+
+audioIndicator = AudioIndicator(w, on_press=audio_button_pressed)
 
 # How far the badge drops to clear a bubble using the slot above it.
 AUDIO_INDICATOR_DROP = 8
@@ -6087,20 +6184,26 @@ def move_audio_indicator(target):
 
 
 def update_audio_indicator():
-    """Show what is playing, where it fits, or hide when nothing is."""
+    """Show what is playing, or the button that starts it.
+
+    Hidden entirely when there is nothing it could play, or when the button
+    has been turned off - a clock with no touchscreen has no use for a control
+    it cannot press, and would just be wearing a triangle for ever.
+    """
     name = audio_playing_name()
-    if not name:
+    if not audio_streams() or not (getattr(Config, 'audio_button_enabled', 1)
+                                   or name):
         audioIndicator.set_active(False)
         audioIndicator.hide()
         return
-    audioIndicator.set_text(Locale.LAudioPlaying % name)
+    audioIndicator.set_state(Locale.LAudioPlaying % name if name else '')
     # Sized to its contents and centred, capped at the bubble width so a long
     # stream name cannot run past the edges of the band it sits in.
     span = min(audioIndicator.sizeHint().width(), int(width * ALERT_W))
     move_audio_indicator(QtCore.QRect(
         int((width - span) / 2), audio_indicator_top(),
         span, audioIndicator.sizeHint().height()))
-    audioIndicator.set_active(True)
+    audioIndicator.set_active(bool(name))
     audioIndicator.raise_()
     audioIndicator.show()
 
@@ -6245,6 +6348,11 @@ def apply_photo_layout():
 add_scrims()
 if Config.layout == 'photo':
     apply_photo_layout()
+
+# Put the badge on screen in its idle state. Not done where it is built: the
+# placement reads PHOTO_ALERT_TOP and the rest of the layout constants, which
+# are defined further down than the widget is.
+update_audio_indicator()
 
 manager = QtNetwork.QNetworkAccessManager()
 

@@ -322,3 +322,10 @@ web_command_port = 8128
 #     {'name': 'Scanner', 'url': '...', 'referer': 'https://example.com/',
 #      'user_agent': 'Mozilla/5.0'},
 audio_streams = []
+
+# Tap the on-screen audio badge to start and stop playback: each stream in
+# turn, then off again. The badge shows a play triangle while idle and the
+# equalizer and stream name while playing. Set to 0 on a clock with no
+# touchscreen, where it would only ever be decoration - the badge still
+# appears by itself whenever something is playing.
+audio_button_enabled = 1  # 1 to make the audio badge a button, 0 for display only
