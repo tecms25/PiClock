@@ -323,9 +323,9 @@ web_command_port = 8128
 #      'user_agent': 'Mozilla/5.0'},
 audio_streams = []
 
-# Tap the on-screen audio badge to start and stop playback: each stream in
-# turn, then off again. The badge shows a play triangle while idle and the
-# equalizer and stream name while playing. Set to 0 on a clock with no
-# touchscreen, where it would only ever be decoration - the badge still
-# appears by itself whenever something is playing.
-audio_button_enabled = 1  # 1 to make the audio badge a button, 0 for display only
+# The audio badge appears while a stream is playing, showing a play button,
+# an equalizer and the stream name. Tapping it moves to the next stream and
+# then stops, so playback can be changed without the web panel. Set to 0 on
+# a clock with no touchscreen: the badge then shows the same thing but does
+# not respond to taps. Start playback with F2 or from the web panel.
+audio_button_enabled = 1  # 1 to make the audio badge tappable, 0 for display only

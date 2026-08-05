@@ -6101,15 +6101,20 @@ flightBubble = FlightBubble(foreGround, alertrect)
 def audio_button_pressed():
     """Cycle the badge: each stream in turn, then off.
 
-    Cycling rather than toggling the first one, because the first one is
-    whatever noaastream is set to - audio_streams() puts it there - and on a
-    clock configured with both, a button that only ever reached NOAA weather
-    radio would never reach the scanner anyone actually added it for.
+    Only reachable while something is playing, since that is the only time
+    the badge is on screen. Cycling rather than toggling, because the badge
+    is then the quickest way to move between streams without reaching for the
+    web panel - and stopping is just the end of the cycle.
     """
     streams = audio_streams()
-    if not streams:
+    if not streams or not getattr(Config, 'audio_button_enabled', 1):
         return
-    following = 0 if audio_index is None else audio_index + 1
+    if audio_index is None:
+        # Nothing is playing, so the badge is not on screen and there was
+        # nothing to press. Explicit rather than incidental: this is what
+        # keeps the badge from being a launcher.
+        return
+    following = audio_index + 1
     if following >= len(streams):
         print('INFO: audio button: %s' % stop_audio_stream())
         return
@@ -6184,19 +6189,18 @@ def move_audio_indicator(target):
 
 
 def update_audio_indicator():
-    """Show what is playing, or the button that starts it.
+    """Show what is playing, or nothing at all.
 
-    Hidden entirely when there is nothing it could play, or when the button
-    has been turned off - a clock with no touchscreen has no use for a control
-    it cannot press, and would just be wearing a triangle for ever.
+    The badge belongs to a playing stream and goes away with it. It carries a
+    play button, but that button is not a launcher sitting on the clock face
+    the rest of the time.
     """
     name = audio_playing_name()
-    if not audio_streams() or not (getattr(Config, 'audio_button_enabled', 1)
-                                   or name):
+    if not name:
         audioIndicator.set_active(False)
         audioIndicator.hide()
         return
-    audioIndicator.set_state(Locale.LAudioPlaying % name if name else '')
+    audioIndicator.set_state(Locale.LAudioPlaying % name)
     # Sized to its contents and centred, capped at the bubble width so a long
     # stream name cannot run past the edges of the band it sits in.
     span = min(audioIndicator.sizeHint().width(), int(width * ALERT_W))
@@ -6348,11 +6352,6 @@ def apply_photo_layout():
 add_scrims()
 if Config.layout == 'photo':
     apply_photo_layout()
-
-# Put the badge on screen in its idle state. Not done where it is built: the
-# placement reads PHOTO_ALERT_TOP and the rest of the layout constants, which
-# are defined further down than the widget is.
-update_audio_indicator()
 
 manager = QtNetwork.QNetworkAccessManager()
 

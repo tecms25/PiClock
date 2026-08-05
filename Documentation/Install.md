@@ -827,28 +827,31 @@ clock is running, and follows a change made elsewhere within a few seconds.
 
 Only one stream plays at a time - starting another swaps it over.
 
-**The clock shows a badge near the top, and the badge is the play button.**
-The play triangle is always there whenever any stream is configured; the
-equalizer and the stream name appear beside it while something is playing.
-Tapping cycles: first stream, then the next, and so on, then off and round
-again. It cycles rather than toggling one stream because `noaastream` is
-always first in the list, so a button that only ever reached the first one
-would never reach the scanner it was probably added for.
+**While a stream is playing the clock shows a badge near the top** carrying a
+play button, a moving equalizer and the stream name. It appears with the
+stream and goes away with it - there is no launcher sitting on the clock face
+the rest of the time.
+
+**Tapping the badge moves to the next stream, and then stops.** With NOAA
+weather radio and a scanner configured, tapping steps from one to the other
+and a third tap stops playback, so what is playing can be changed without
+reaching for the web panel. Start playback with **F2** or from the panel's
+Control page.
 
 The badge stays visible even with the clock face hidden by F9. It sits in the
 same slot as the severe weather and aircraft bubbles when that slot is free,
 and slides below whichever of them is showing, so it never floats in the
-middle of nothing. F2 still toggles the first stream from the keyboard.
+middle of nothing.
 
-On a clock with no touchscreen the button is only decoration, so it can be
-turned off in `conf/Config.py`:
+On a clock with no touchscreen the taps are no use, so they can be turned off
+in `conf/Config.py`:
 
 ```
-audio_button_enabled = 0   # 1 to make the audio badge a button, 0 for display only
+audio_button_enabled = 0   # 1 to make the audio badge tappable, 0 for display only
 ```
 
-With it off, the badge appears by itself whenever something is playing and is
-gone the rest of the time.
+The badge itself looks the same either way; with it off it simply ignores
+taps.
 
 **The equalizer follows the actual output**, so it goes flat through the
 silence between transmissions on a scanner feed and moves only when there is
