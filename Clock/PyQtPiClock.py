@@ -2880,6 +2880,10 @@ class CameraTile(QtCore.QObject):
         self.stream.stop()
         self.label.hide()
         self.label.deleteLater()
+        # The tile itself is parented to the camera card, so dropping it from
+        # CameraPanel.tiles does not destroy it - it and its stream and timer
+        # would pile up on the card, one set per alert, for the life of the app.
+        self.deleteLater()
 
 
 class CameraPanel(QtWidgets.QFrame):
@@ -4476,7 +4480,12 @@ class SlideShow(QtWidgets.QLabel):
         anim.setEndValue(1.0)
         anim.finished.connect(lambda: self._finish_transition(pixmap))
         self._fade_anim = anim
-        anim.start()
+        # DeleteWhenStopped, because this animation is parented to self and self
+        # lives as long as the clock does. Dropping the reference in
+        # _finish_transition() is not enough: the C++ object outlives it, and
+        # with it the finished-slot closure holding a full-screen QPixmap. That
+        # is ~8MB a slide on a 1080p display, never released.
+        anim.start(QtCore.QAbstractAnimation.DeletionPolicy.DeleteWhenStopped)
 
     def _finish_transition(self, pixmap):
         self.setPixmap(pixmap)
