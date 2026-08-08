@@ -1693,7 +1693,11 @@ def qtstart():
     # Fetch RainViewer metadata once at regular intervals (every 10 minutes)
     metadatatimer = QtCore.QTimer()
     metadatatimer.timeout.connect(get_rainviewer_metadata)
-    metadatatimer.start(int(1000 * 600 + random.uniform(1000, 5000)))  # 10 minutes
+    # Ticks often, fetches rarely: get_rainviewer_metadata() returns without
+    # touching the network unless a frame is actually due. A 10 minute tick
+    # drifts against the 10 minute frame grid and ends up holding a frame list
+    # one slot short of what the radars ask for.
+    metadatatimer.start(int(1000 * RADAR_METADATA_MIN_INTERVAL + random.uniform(1000, 5000)))
 
     # Fetch metadata immediately on startup
     get_rainviewer_metadata()
@@ -4780,21 +4784,63 @@ class SlideShow(QtWidgets.QLabel):
 radarMetadataCache = {
     'data': {},
     'lastupdated': 0,
-    'updateinterval': 600  # refresh every 10 minutes (same as tile intervals)
+    'updateinterval': 600  # outer bound: refresh at least this often
 }
 radarMetadataReply = None
+
+# RainViewer publishes each 10-minute slot shortly after the slot begins - the
+# live feed's own `generated` stamp was 30s past the boundary and already
+# listed it. Allow half again on top before calling a frame late: too eager and
+# a slow publish means re-polling until it lands, too patient and the radars
+# spend longer than they need to on the previous frame.
+RADAR_PUBLISH_LAG_SEC = 45
+# Floor on how often the metadata may be re-fetched, however overdue a frame is.
+RADAR_METADATA_MIN_INTERVAL = 60
+# How soon a radar retries when it has no metadata at all yet (boot with a slow
+# network), rather than sitting out a whole refresh interval.
+RADAR_METADATA_RETRY_SEC = 10
+
+
+def newest_radar_frame_time():
+    """Newest past-frame timestamp RainViewer has told us about, or 0."""
+    data = radarMetadataCache['data']
+    if not data or 'radar' not in data:
+        return 0
+    past = data['radar'].get('past') or []
+    times = [f['time'] for f in past if f.get('time') is not None]
+    return max(times) if times else 0
+
+
+def radar_frame_overdue():
+    """True when a slot should have been published but is not in the cache.
+
+    The metadata poll and the 10-minute frame grid are independent cycles, so
+    polling on a fixed interval drifts against publication and settles into
+    holding a frame list that stops one slot short of the slot the radars are
+    about to ask for. Refreshing on this instead keeps the two in step.
+    """
+    expected = int((time.time() - RADAR_PUBLISH_LAG_SEC) / 600) * 600
+    return expected > newest_radar_frame_time()
 
 
 def get_rainviewer_metadata():
     """Fetch RainViewer metadata once globally, shared by all radar instances."""
     global manager, radarMetadataCache, radarMetadataReply
 
-    # Check if the cache is still fresh (updated within the last 10 minutes)
-    if time.time() - radarMetadataCache['lastupdated'] < radarMetadataCache['updateinterval']:
+    age = time.time() - radarMetadataCache['lastupdated']
+    if age < RADAR_METADATA_MIN_INTERVAL:
+        return
+    # Refresh because a frame is actually due, or because the cache has gone
+    # stale anyway. The first condition is what keeps this in phase with the
+    # frame grid; the second is the backstop if publication times move.
+    if age < radarMetadataCache['updateinterval'] and not radar_frame_overdue():
         return
 
     metadataurl = 'https://api.rainviewer.com/public/weather-maps.json'
-    cached = api_cache_read(metadataurl, radarMetadataCache['updateinterval'])
+    # Only reuse a disk copy that is newer than the poll floor. Reusing one up
+    # to updateinterval old would hand back the very frame list we refreshed to
+    # get past, making the overdue check above unable to do anything.
+    cached = api_cache_read(metadataurl, RADAR_METADATA_MIN_INTERVAL)
     if cached is not None:
         print('INFO: using cached RainViewer metadata')
         rainviewer_metadata_finished(cached)
@@ -4981,8 +5027,14 @@ class Radar(QtWidgets.QLabel):
         instance shows the same point in the loop at the same moment."""
         now = time.time()
         if now > (self.lastget + self.interval):
-            self.get(int(now))
-            self.lastget = now
+            if newest_radar_frame_time():
+                self.get(int(now))
+                self.lastget = now
+            else:
+                # No metadata at all yet - a boot before the network is up.
+                # Come back in seconds rather than sitting out a whole refresh
+                # interval on a blank radar.
+                self.lastget = now - self.interval + RADAR_METADATA_RETRY_SEC
         if len(self.frameImages) < 1:
             return
 
@@ -4993,8 +5045,13 @@ class Radar(QtWidgets.QLabel):
         else:
             frame_index = tick_in_cycle - (self.HOLD_TICKS - 1)
 
-        t_now = int(now / 600) * 600
-        target_time = t_now - (self.anim - frame_index) * 600
+        # Anchored on the newest slot actually fetched, not on the wall clock.
+        # The current wall-clock slot is not published for the first minute or
+        # two of its life, so anchoring there aims the top of the loop at a
+        # frame that does not exist and silently repeats the previous one.
+        # baseTime comes from the shared metadata, so every instance still
+        # steps through the loop together.
+        target_time = self.baseTime - (self.anim - frame_index) * 600
 
         for f in self.frameImages:
             if f['time'] == target_time:
@@ -5007,8 +5064,16 @@ class Radar(QtWidgets.QLabel):
         """Retrieve radar tiles for a specific time or the current base time."""
         t = int(t / 600) * 600
         if t > 0:
-            if self.baseTime == t:
-                return
+            # Never ask for a slot RainViewer has not published yet. The slot
+            # that has just begun is the obvious thing to want, but it does not
+            # exist for a minute or two after the boundary - and asking anyway
+            # is what logs "no radar data available" and leaves the newest
+            # frame a full refresh behind.
+            newest = newest_radar_frame_time()
+            if newest:
+                t = min(t, newest)
+            if t <= self.baseTime:
+                return  # nothing newer to fetch yet
         if t == 0:
             t = self.baseTime
         else:
