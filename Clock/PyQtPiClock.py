@@ -4445,6 +4445,33 @@ class SlideShow(QtWidgets.QLabel):
         if self.img_list and self.count < 0:
             self.switch_image()
 
+    def _compose(self, image):
+        """Lay the scaled photo onto a full-size frame filled with the slide
+        background.
+
+        The fading layer has to cover the whole widget. A bare scaled pixmap
+        only covers where the photo itself lands, so with KeepAspectRatio
+        anything outside it - the bars beside a portrait photo, or above and
+        below a wide one - is transparent. Through those bars the outgoing
+        photo stays at full strength for the whole fade and then flips to the
+        background in a single frame, which is the hard snap you get whenever
+        consecutive photos are not the same shape. Compositing first means the
+        layer is opaque edge to edge and the whole frame dissolves together.
+        """
+        frame = QPixmap(self.size())
+        frame.fill(QColor(Config.slide_bg_color))
+        scaled = QtGui.QPixmap.fromImage(image).scaled(
+            self.size(),
+            Qt.AspectRatioMode.KeepAspectRatio,
+            Qt.TransformationMode.SmoothTransformation)
+        painter = QPainter()
+        painter.begin(frame)
+        painter.drawPixmap(int((frame.width() - scaled.width()) / 2),
+                           int((frame.height() - scaled.height()) / 2),
+                           scaled)
+        painter.end()
+        return frame
+
     def display_image(self, path):
         # Read through QImageReader with autoTransform so EXIF orientation is
         # applied; QImage(path) ignores it, which lands portrait phone photos
@@ -4455,10 +4482,7 @@ class SlideShow(QtWidgets.QLabel):
         if image.isNull():
             print(f"ERROR: Unable to load slideshow image: {path}: {reader.errorString()}")
             return
-        pixmap = QtGui.QPixmap.fromImage(image).scaled(
-            self.size(),
-            Qt.AspectRatioMode.KeepAspectRatio,
-            Qt.TransformationMode.SmoothTransformation)
+        pixmap = self._compose(image)
 
         if Config.slide_transition_ms <= 0:
             self.setPixmap(pixmap)
@@ -4478,6 +4502,11 @@ class SlideShow(QtWidgets.QLabel):
         anim.setDuration(int(Config.slide_transition_ms))
         anim.setStartValue(0.0)
         anim.setEndValue(1.0)
+        # A linear ramp changes opacity at full rate from the first frame and is
+        # still doing so on the last, so the dissolve both starts and arrives
+        # abruptly. Easing it at both ends is what makes it read as a dissolve
+        # rather than a cut with a ramp in the middle.
+        anim.setEasingCurve(QtCore.QEasingCurve.Type.InOutQuad)
         anim.finished.connect(lambda: self._finish_transition(pixmap))
         self._fade_anim = anim
         # DeleteWhenStopped, because this animation is parented to self and self
