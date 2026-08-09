@@ -9,6 +9,7 @@ validated again by the clock against its own table, so a name that is not on
 both lists reaches nothing.
 """
 
+import json
 import os
 import sys
 import urllib.error
@@ -47,7 +48,8 @@ CATALOGUE = (
 # on the clock; the Audio streams card does the same job with a named stream,
 # so a second control for "whichever one is first" is only confusing.
 NAMES = frozenset(entry['name'] for entry in CATALOGUE) | {
-    'audio_play', 'audio_stop', 'audio_status', 'radio_toggle'}
+    'audio_play', 'audio_stop', 'audio_status', 'radio_toggle',
+    'camera_show', 'camera_hide'}
 
 
 def streams():
@@ -141,7 +143,37 @@ def screenshot(port, token, width=960):
                       'screen to capture.' % port)
 
 
-def send(name, port, token, stream=None):
+def cameras(port, token):
+    """Cameras the clock says Blue Iris has, as [{'name', 'label'}].
+
+    Empty is a normal answer, not an error: the clock replies from a cache it
+    fills in the background, so the first ask after a restart usually lands
+    before the list does. The page re-asks rather than reporting a fault.
+    """
+    if not token:
+        return []
+    query = urllib.parse.urlencode({'token': token, 'do': 'camera_list'})
+    url = 'http://127.0.0.1:%d/command?%s' % (int(port), query)
+    try:
+        with urllib.request.urlopen(url, timeout=TIMEOUT_SECONDS) as reply:
+            body = reply.read().decode('utf-8', 'replace')
+        found = json.loads(body)
+    except (urllib.error.URLError, OSError, ValueError):
+        return []
+    if not isinstance(found, list):
+        return []
+    out = []
+    for entry in found:
+        if not isinstance(entry, dict):
+            continue
+        name = str(entry.get('name') or '').strip()
+        if name:
+            out.append({'name': name,
+                        'label': str(entry.get('label') or '').strip() or name})
+    return out
+
+
+def send(name, port, token, stream=None, camera=None):
     """Ask the running clock to do one thing. Returns (ok, message).
 
     Never raises. The clock not answering is the ordinary case when it has been
@@ -155,6 +187,14 @@ def send(name, port, token, stream=None):
                        'web/set_password.py, then restart the clock.')
 
     fields = {'token': token, 'do': name}
+    if camera is not None:
+        # Passed as text because a camera is named, not numbered. The clock
+        # checks it against the list Blue Iris gave it before opening anything,
+        # so a name from a browser cannot reach a camera that does not exist.
+        camera = str(camera).strip()
+        if not camera:
+            return False, 'No camera was chosen.'
+        fields['camera'] = camera
     if stream is not None:
         # Sent as a number and checked again by the clock against its own
         # list, so a stream index from a browser can only ever select one of

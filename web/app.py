@@ -233,6 +233,10 @@ def create_app(settings=None, secrets_path=SECRETS, audit_db=AUDIT_DB):
                                # Asked of the clock as the page is built; the
                                # page then polls /api/audio to keep it current.
                                audio_state=audio_state(),
+                               # Likewise, and for the same reason: the clock
+                               # may not have the list yet, so /api/cameras
+                               # fills the card in once it does.
+                               cameras=camera_list(),
                                volume=output_volume.get(),
                                volume_available=output_volume.available(),
                                service=status.service_status(),
@@ -249,7 +253,8 @@ def create_app(settings=None, secrets_path=SECRETS, audit_db=AUDIT_DB):
         ok, message = commands.send(name,
                                     settings.get('web_command_port', 8128),
                                     app.config['COMMAND_TOKEN'],
-                                    stream=request.form.get('stream'))
+                                    stream=request.form.get('stream'),
+                                    camera=request.form.get('camera'))
         audit.record(audit_db, caller(), name, 'ok' if ok else 'failed', message)
         app.logger.info('%s sent command %s -> %s', caller(), name, message)
         return outcome(ok, message)
@@ -322,6 +327,10 @@ def create_app(settings=None, secrets_path=SECRETS, audit_db=AUDIT_DB):
                              settings.get('web_command_port', 8128),
                              app.config['COMMAND_TOKEN'])[1]
 
+    def camera_list():
+        return commands.cameras(settings.get('web_command_port', 8128),
+                                app.config['COMMAND_TOKEN'])
+
     @app.route('/api/audio')
     def api_audio():
         """Just the audio line and volume, small enough for the page to poll.
@@ -361,6 +370,16 @@ def create_app(settings=None, secrets_path=SECRETS, audit_db=AUDIT_DB):
             return (body, 503, {'Content-Type': 'text/plain'})
         return app.response_class(body, mimetype=kind, headers={
             'Cache-Control': 'no-store, max-age=0'})
+
+    @app.route('/api/cameras')
+    def api_cameras():
+        """The Blue Iris cameras the clock knows about.
+
+        Polled rather than rendered once with the page: the clock answers from
+        a cache it fills in the background, so a panel opened just after a
+        restart would otherwise show an empty card until it was reloaded.
+        """
+        return jsonify({'cameras': camera_list()})
 
     @app.route('/api/status')
     def api_status():

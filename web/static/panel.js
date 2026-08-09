@@ -89,6 +89,75 @@
     }, 5000);
   }
 
+  // The clock answers the camera list from a cache it fills in the background,
+  // so a panel opened right after a restart gets an empty list first. Poll
+  // until it arrives, then stop: cameras are not added to Blue Iris while
+  // somebody watches this page, and the page is rebuilt on every visit.
+  function renderCameras(cameras) {
+    var box = document.getElementById('camera-actions');
+    var empty = document.getElementById('camera-empty');
+    var count = document.getElementById('camera-count');
+    if (!box || !cameras) { return false; }
+    if (Number(count && count.textContent) === cameras.length) {
+      return cameras.length > 0;
+    }
+    var dismiss = box.lastElementChild;
+    Array.prototype.slice.call(box.querySelectorAll('form')).forEach(
+      function (form) { if (form !== dismiss) { box.removeChild(form); } });
+    cameras.forEach(function (camera) {
+      var form = document.createElement('form');
+      form.method = 'post';
+      form.action = box.getAttribute('data-command-url') || '/command';
+      form.setAttribute('data-live', '');
+      // textContent throughout: a camera name comes from Blue Iris, and the
+      // page must not build markup out of it.
+      [['csrf', csrfToken()], ['command', 'camera_show'],
+       ['camera', camera.name]].forEach(function (pair) {
+        var field = document.createElement('input');
+        field.type = 'hidden';
+        field.name = pair[0];
+        field.value = pair[1];
+        form.appendChild(field);
+      });
+      var button = document.createElement('button');
+      button.type = 'submit';
+      button.className = 'secondary';
+      button.textContent = 'Show';
+      form.appendChild(button);
+      var label = document.createElement('span');
+      label.className = 'muted';
+      label.textContent = camera.label || camera.name;
+      form.appendChild(label);
+      box.insertBefore(form, dismiss);
+    });
+    if (count) { count.textContent = String(cameras.length); }
+    if (empty) { empty.hidden = cameras.length > 0; }
+    return cameras.length > 0;
+  }
+
+  function csrfToken() {
+    var field = document.querySelector('input[name="csrf"]');
+    return field ? field.value : '';
+  }
+
+  function startCameraPolling() {
+    if (!document.getElementById('camera-actions')) { return; }
+    if (Number(document.getElementById('camera-count').textContent) > 0) {
+      return;  // the page was rendered with the list already
+    }
+    var timer = setInterval(function () {
+      if (document.hidden) { return; }
+      fetch('/api/cameras', {
+        headers: { 'Accept': 'application/json' },
+        credentials: 'same-origin'
+      }).then(function (r) {
+        return r.ok ? r.json() : null;
+      }).then(function (data) {
+        if (data && renderCameras(data.cameras)) { clearInterval(timer); }
+      }).catch(function () { /* a blip; the next poll can try again */ });
+    }, 4000);
+  }
+
   function renderActivity(events) {
     if (!activity || !events) { return; }
     // Built with textContent rather than innerHTML: these rows carry command
@@ -268,4 +337,5 @@
   });
 
   startAudioPolling();
+  startCameraPolling();
 }());

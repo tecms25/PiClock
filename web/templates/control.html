@@ -97,6 +97,37 @@
 </div>
 
 <div class="card">
+  <h2>Cameras <span class="count" id="camera-count">{{ cameras|length }}</span></h2>
+  <p class="muted">Put a Blue Iris camera on the clock's screen, shown the same
+    way a triggered alert is. It stays until you dismiss it - tapping the
+    clock's screen closes it too.</p>
+  <div class="actions" id="camera-actions"
+       data-command-url="{{ url_for('command') }}">
+    {% for c in cameras %}
+    <form method="post" action="{{ url_for('command') }}" data-live>
+      <input type="hidden" name="csrf" value="{{ csrf_token() }}">
+      <input type="hidden" name="command" value="camera_show">
+      <input type="hidden" name="camera" value="{{ c.name }}">
+      <button type="submit" class="secondary">Show</button>
+      <span class="muted">{{ c.label }}</span>
+    </form>
+    {% endfor %}
+    <form method="post" action="{{ url_for('command') }}" data-live>
+      <input type="hidden" name="csrf" value="{{ csrf_token() }}">
+      <input type="hidden" name="command" value="camera_hide">
+      <button type="submit">Dismiss</button>
+      <span class="muted">Close whatever cameras are on screen.</span>
+    </form>
+  </div>
+  <p class="muted" id="camera-empty" {% if cameras %}hidden{% endif %}>
+    No cameras yet. The clock asks Blue Iris for the list in the background, so
+    this fills in shortly after it starts; if it stays empty, check
+    <code>blueiris_server</code>, <code>blueiris_user</code> and
+    <code>blueiris_password</code> in
+    <a href="{{ url_for('settings_page') }}">Settings</a>.</p>
+</div>
+
+<div class="card">
   <h2>Activity <span class="count" id="activity-count">{{ events|length }}</span></h2>
   <table>
     <thead>

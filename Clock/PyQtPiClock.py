@@ -1727,6 +1727,11 @@ def qtstart():
         blueirisListener = BlueIrisListener()
         blueirisListener.triggered.connect(blueiris_alert)
         blueirisListener.listen(getattr(Config, 'blueiris_listen_port', 8127))
+        # Fetched now rather than when the panel first asks: the answer comes
+        # from a cache, so asking cold returns nothing and the panel would open
+        # on an empty card and have to poll. One login at startup buys a list
+        # that is ready whenever somebody wants it.
+        cameraPanel.session.refresh_cameras()
 
     # Live commands from the web control panel, if it has been set up. No
     # token means no channel: the panel writes one into conf/web_secret.json
@@ -2851,6 +2856,9 @@ class CameraTile(QtCore.QObject):
         self.camera = camera
         self.requested_width = 0
         self.retried = False
+        # Opened from the control panel rather than by an alert: it has no
+        # countdown and stays until someone dismisses it.
+        self.pinned = False
 
         self.label = QtWidgets.QLabel(parent_widget)
         self.label.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -2951,12 +2959,23 @@ class CameraPanel(QtWidgets.QFrame):
     # -- showing cameras ------------------------------------------------------
 
     def show_camera(self, camera, seconds):
-        """Add a camera to the grid, or restart its countdown if already up."""
+        """Add a camera to the grid, or restart its countdown if already up.
+
+        seconds of 0 or less pins the camera: no countdown, so it stays until
+        it is dismissed. That is what the control panel asks for - someone
+        watching a camera on purpose should not have it taken away mid-look.
+        """
+        pinned = seconds is not None and seconds <= 0
         tile = self._find(camera)
         if tile is None:
             if len(self.tiles) >= self._max_tiles():
-                # Full. The newest alert matters more than the oldest picture.
-                oldest = self.tiles.pop(0)
+                # Full. The newest alert matters more than the oldest picture,
+                # but not more than one somebody deliberately opened, so drop
+                # the oldest that is not pinned and only fall back to the
+                # oldest outright when every one of them is.
+                spare = [t for t in self.tiles if not t.pinned] or self.tiles
+                oldest = spare[0]
+                self.tiles.remove(oldest)
                 print('INFO: camera grid full, dropping %s' % oldest.camera)
                 oldest.close()
             tile = CameraTile(self.card, camera, self._tile_style)
@@ -2969,7 +2988,14 @@ class CameraPanel(QtWidgets.QFrame):
             self.tiles.append(tile)
             self._relayout()
             self._begin(tile)
-        tile.timer.start(int(max(1, seconds) * 1000))
+        if pinned:
+            tile.pinned = True
+            tile.timer.stop()  # it may have been on a countdown from an alert
+        elif not tile.pinned:
+            # An alert for a camera already pinned leaves it pinned: the alert
+            # is not a reason to start a clock on something someone opened to
+            # watch, and it is already on screen anyway.
+            tile.timer.start(int(max(1, seconds) * 1000))
 
         self._pause_slideshow()
         # Raising above every sibling puts this over brightness_overlay too, so
@@ -3352,6 +3378,18 @@ class CommandListener(RequestLineServer):
                 print('WARNING:', traceback.format_exc())
                 return '500 could not take a screenshot'
             return ('200 OK', 'image/jpeg', payload)
+
+        # Also answered here rather than through COMMANDS, for the same reason:
+        # a list of cameras is not a line of text. Empty until the first fetch
+        # lands, which is why the panel re-asks rather than showing "none".
+        if params.get('do', '') == 'camera_list':
+            try:
+                payload = json.dumps(
+                    cameraPanel.session.camera_list()).encode('utf-8')
+            except Exception:
+                print('WARNING:', traceback.format_exc())
+                return '500 could not read the camera list'
+            return ('200 OK', 'application/json', payload)
 
         name = params.get('do', '')
         ok, message = run_command(name, params)
@@ -4001,6 +4039,37 @@ def _cmd_foreground_toggle(params):
     return 'clock and weather shown'
 
 
+def _cmd_camera_show(params):
+    """Put a camera on screen from the control panel, until it is dismissed.
+
+    The name is checked against what Blue Iris reported rather than passed
+    straight through, so this can only ever open a camera that exists. The
+    blueiris_cameras/blueiris_triggers filters are deliberately not applied:
+    those decide which alerts are worth interrupting the clock for, which is a
+    different question from what somebody may ask to see.
+    """
+    camera = (params.get('camera') or '').strip()
+    if not camera:
+        return False, 'no camera was named'
+    known = cameraPanel.session.camera_list()
+    if not known:
+        # Either the list has not arrived yet or Blue Iris is unreachable.
+        # Asking again is the fix for the first and the panel does that.
+        return False, 'the camera list is not loaded yet; try again in a moment'
+    match = next((c for c in known if c['name'].lower() == camera.lower()), None)
+    if match is None:
+        return False, 'there is no camera called %s' % camera
+    cameraPanel.show_camera(match['name'], 0)  # 0 = stays until dismissed
+    return True, 'showing %s' % match['label']
+
+
+def _cmd_camera_hide(params):
+    if not cameraPanel.isVisible():
+        return True, 'no camera was on screen'
+    cameraPanel.dismiss()
+    return True, 'cameras dismissed'
+
+
 def _cmd_hide_alert(params):
     if not alertDetailPanel.isVisible():
         return 'no alert detail was open'
@@ -4023,6 +4092,8 @@ COMMANDS = {
     'audio_play': lambda params: play_audio_stream(params.get('stream', '')),
     'audio_stop': lambda params: stop_audio_stream(),
     'audio_status': lambda params: audio_status_text(),
+    'camera_show': _cmd_camera_show,
+    'camera_hide': _cmd_camera_hide,
 }
 
 # Commands that only report, and are polled. They change nothing, so a log line
@@ -4132,12 +4203,21 @@ class BlueIrisSession(QtCore.QObject):
     # stream starts. This is the fallback for a config predating that setting.
     DEFAULT_IDLE_SECONDS = 45
 
+    # How long a fetched camera list is trusted. Cameras are added to Blue Iris
+    # rarely, so this is only so a new one turns up in the panel without the
+    # clock being restarted.
+    CAMERA_LIST_TTL = 300
+
     def __init__(self, parent=None):
         QtCore.QObject.__init__(self, parent)
         self.key = ''
         self._reply = None
         self._busy = False
         self._used = 0.0
+        self._cameras = []
+        self._cameras_at = 0.0
+        self._cameras_busy = False
+        self._cameras_wanted = False
 
     def clear(self):
         """Forget the key, so the next camera logs in afresh."""
@@ -4273,15 +4353,88 @@ class BlueIrisSession(QtCore.QObject):
             self._used = time.monotonic()
             print('INFO: signed in to Blue Iris')
             self.ready.emit(self.key)
+            if self._cameras_wanted:
+                # A camera-list refresh was waiting on this key. After the
+                # signal, so waiting streams start first: they are what someone
+                # is looking at, the list is only for the panel.
+                self._request_cameras()
         except Exception:
             print('WARNING:', traceback.format_exc())
             self._give_up(Locale.LBiReadFailed)
 
     def _give_up(self, message):
         self._busy = False
+        # Cleared here too, or a camera-list refresh that was waiting on this
+        # login stays "in flight" forever and no later refresh is ever started.
+        self._cameras_busy = False
+        self._cameras_wanted = False
         self.key = ''
         print('ERROR: Blue Iris login: ' + message)
         self.failed.emit(message)
+
+    # -- camera list ---------------------------------------------------------
+
+    def camera_list(self):
+        """Cameras Blue Iris reports, as [{'name', 'label'}], from cache.
+
+        Answers from the cache and refreshes in the background when it is
+        stale. The control panel asks over a request it has to answer promptly,
+        and a refresh here may have to sign in first, so waiting for one is not
+        on the table - an empty list on the very first ask is the cost, and the
+        panel simply asks again.
+        """
+        if (time.monotonic() - self._cameras_at) > self.CAMERA_LIST_TTL:
+            self.refresh_cameras()
+        return list(self._cameras)
+
+    def refresh_cameras(self):
+        """Start a camera-list fetch, signing in first if the key is stale."""
+        if self._cameras_busy:
+            return
+        self._cameras_busy = True
+        if not self.is_fresh():
+            # _answered() comes back here once the key lands, the same way
+            # CameraPanel._begin defers a stream until it has one.
+            self._cameras_wanted = True
+            self.acquire()
+            return
+        self._request_cameras()
+
+    def _request_cameras(self):
+        self._cameras_wanted = False
+        self._post({'cmd': 'camlist', 'session': self.key}, self._cameras_finished)
+
+    def _cameras_finished(self, reply):
+        self._cameras_busy = False
+        try:
+            data = self._read(reply)
+            if data is None:
+                return
+            found = []
+            for entry in data.get('data') or []:
+                if not isinstance(entry, dict):
+                    continue
+                name = (entry.get('optionValue') or '').strip()
+                label = (entry.get('optionDisplay') or '').strip()
+                if not name:
+                    continue
+                # Groups and the two built-in "all cameras" entries come back in
+                # the same list. A real group carries its members in 'group',
+                # and Blue Iris marks every one of them with a leading '+' on
+                # the display name - '@index' has no members but is still one.
+                if entry.get('group') or label.startswith('+'):
+                    continue
+                # A camera disabled in Blue Iris has nothing to stream, so
+                # offering it would only ever produce "unavailable".
+                if entry.get('isEnabled') is False:
+                    continue
+                found.append({'name': name, 'label': label or name})
+            self._cameras = found
+            self._cameras_at = time.monotonic()
+            self.touch()
+            print('INFO: Blue Iris reports %d camera(s)' % len(found))
+        except Exception:
+            print('WARNING:', traceback.format_exc())
 
 
 def blueiris_alert(params):
