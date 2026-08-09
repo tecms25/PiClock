@@ -6015,9 +6015,11 @@ clockface.setAlignment(Qt.AlignmentFlag.AlignCenter)
 clockface.setGeometry(clockrect)
 add_text_shadow(clockface)
 
-# Both page-1 zoom levels share the lower left slot and cross-dissolve between
-# each other, rather than taking a block each down the left edge.
-radarStackRect = QtCore.QRect(int(3 * xscale), int(622 * yscale), int(300 * xscale), int(275 * yscale))
+# Both page-1 zoom levels share one slot down the left edge and cross-dissolve
+# between each other, rather than taking a block each. The slot is taller than
+# either of the two it replaced, growing upward into the space they vacated
+# while its bottom edge stays put.
+radarStackRect = QtCore.QRect(int(3 * xscale), int(397 * yscale), int(350 * xscale), int(500 * yscale))
 radarStack = RadarStack(foreGround, radarStackRect, Config.radar_cycle_seconds)
 # Each radar fills the stack, so it is built against the stack's own geometry
 # rather than the screen's. Radar uses the rect's size for the map image and
@@ -6078,11 +6080,27 @@ datey2.setGeometry(int(800 * xscale), int(820 * yscale), int(640 * xscale), 100)
 add_text_shadow(datey2)
 
 
-ypos = -10
+# Top of the current-conditions block in the 1440x900 design grid. Everything
+# below is placed by advancing ypos, so this one value positions the whole block
+# and leaves the spacing within it untouched.
+#
+# Sits just above centre in the space over the radar: the block runs from here
+# to ypos+353 (wdate is the last line, at ypos+338, and sets its own 100-tall
+# box), and the radar slot below starts at y=397, so dead centre would be 22.
+ypos = 10
+
+# Horizontally the block shares the radar's extent, so text and radar line up as
+# one column. Taken from the slot itself rather than repeated as numbers, so
+# moving or resizing the radar carries the text with it. These are already in
+# device pixels, unlike the design-grid values around them.
+wxblock_x = radarStackRect.x()
+wxblock_w = radarStackRect.width()
+
 wxicon = QtWidgets.QLabel(foreGround)
 wxicon.setObjectName('wxicon')
 wxicon.setStyleSheet('#wxicon { background-color: transparent; }')
-wxicon.setGeometry(int(75 * xscale), int(ypos * yscale), int(150 * xscale), int(150 * yscale))
+wxicon.setGeometry(wxblock_x + (wxblock_w - int(150 * xscale)) // 2,
+                   int(ypos * yscale), int(150 * xscale), int(150 * yscale))
 
 attribution = QtWidgets.QLabel(foreGround)
 attribution.setObjectName('attribution')
@@ -6126,7 +6144,7 @@ wxdesc.setStyleSheet('#wxdesc { background-color: transparent; color: ' +
                      Config.fontattr +
                      '}')
 wxdesc.setAlignment(Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignTop)
-wxdesc.setGeometry(int(3 * xscale), int(ypos * yscale), int(300 * xscale), 100)
+wxdesc.setGeometry(wxblock_x, int(ypos * yscale), wxblock_w, 100)
 
 add_text_shadow(wxdesc)
 
@@ -6156,7 +6174,7 @@ temper.setStyleSheet('#temper { background-color: transparent; color: ' +
                      Config.fontattr +
                      '}')
 temper.setAlignment(Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignTop)
-temper.setGeometry(int(3 * xscale), int(ypos * yscale), int(300 * xscale), int(100 * yscale))
+temper.setGeometry(wxblock_x, int(ypos * yscale), wxblock_w, int(100 * yscale))
 
 add_text_shadow(temper)
 
@@ -6187,7 +6205,7 @@ feelslike.setStyleSheet('#feelslike { background-color: transparent; color: ' +
                         Config.fontattr +
                         '}')
 feelslike.setAlignment(Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignTop)
-feelslike.setGeometry(int(3 * xscale), int(ypos * yscale), int(300 * xscale), 100)
+feelslike.setGeometry(wxblock_x, int(ypos * yscale), wxblock_w, 100)
 
 add_text_shadow(feelslike)
 
@@ -6203,7 +6221,7 @@ humidity.setStyleSheet('#humidity { background-color: transparent; color: ' +
                        Config.fontattr +
                        '}')
 humidity.setAlignment(Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignTop)
-humidity.setGeometry(int(3 * xscale), int(ypos * yscale), int(300 * xscale), 100)
+humidity.setGeometry(wxblock_x, int(ypos * yscale), wxblock_w, 100)
 
 add_text_shadow(humidity)
 
@@ -6219,7 +6237,7 @@ press.setStyleSheet('#press { background-color: transparent; color: ' +
                     Config.fontattr +
                     '}')
 press.setAlignment(Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignTop)
-press.setGeometry(int(3 * xscale), int(ypos * yscale), int(300 * xscale), 100)
+press.setGeometry(wxblock_x, int(ypos * yscale), wxblock_w, 100)
 
 add_text_shadow(press)
 
@@ -6251,7 +6269,7 @@ wind.setStyleSheet('#wind { background-color: transparent; color: ' +
                    Config.fontattr +
                    '}')
 wind.setAlignment(Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignTop)
-wind.setGeometry(int(3 * xscale), int(ypos * yscale), int(300 * xscale), 100)
+wind.setGeometry(wxblock_x, int(ypos * yscale), wxblock_w, 100)
 
 add_text_shadow(wind)
 
@@ -6267,7 +6285,7 @@ wdate.setStyleSheet('#wdate { background-color: transparent; color: ' +
                     Config.fontattr +
                     '}')
 wdate.setAlignment(Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignTop)
-wdate.setGeometry(int(3 * xscale), int(ypos * yscale), int(300 * xscale), 100)
+wdate.setGeometry(wxblock_x, int(ypos * yscale), wxblock_w, 100)
 
 add_text_shadow(wdate)
 
