@@ -143,23 +143,47 @@ def screenshot(port, token, width=960):
                       'screen to capture.' % port)
 
 
+def _json(do, port, token, default):
+    """Ask the clock something it answers with JSON. Never raises.
+
+    The clock being stopped is ordinary, and so is a cache that has not filled
+    yet, so both come back as the caller's default rather than an error: these
+    feed a page that polls, and it simply asks again.
+    """
+    if not token:
+        return default
+    query = urllib.parse.urlencode({'token': token, 'do': do})
+    url = 'http://127.0.0.1:%d/command?%s' % (int(port), query)
+    try:
+        with urllib.request.urlopen(url, timeout=TIMEOUT_SECONDS) as reply:
+            return json.loads(reply.read().decode('utf-8', 'replace'))
+    except (urllib.error.URLError, OSError, ValueError):
+        return default
+
+
+def audio_state(port, token):
+    """{'text': ..., 'playing': index or None} for the audio card.
+
+    The index is what lets each stream's own button read Play or Stop; the
+    sentence is what the card shows above them.
+    """
+    found = _json('audio_state', port, token, {})
+    if not isinstance(found, dict):
+        return {'text': '', 'playing': None}
+    playing = found.get('playing')
+    if not isinstance(playing, int):
+        playing = None
+    return {'text': str(found.get('text') or ''), 'playing': playing}
+
+
 def cameras(port, token):
-    """Cameras the clock says Blue Iris has, as [{'name', 'label'}].
+    """Cameras the clock says Blue Iris has, as [{'name', 'label', 'showing'}].
 
     Empty is a normal answer, not an error: the clock replies from a cache it
     fills in the background, so the first ask after a restart usually lands
     before the list does. The page re-asks rather than reporting a fault.
     """
-    if not token:
-        return []
-    query = urllib.parse.urlencode({'token': token, 'do': 'camera_list'})
-    url = 'http://127.0.0.1:%d/command?%s' % (int(port), query)
-    try:
-        with urllib.request.urlopen(url, timeout=TIMEOUT_SECONDS) as reply:
-            body = reply.read().decode('utf-8', 'replace')
-        found = json.loads(body)
-    except (urllib.error.URLError, OSError, ValueError):
-        return []
+    found = _json('camera_list', port, token, [])
     if not isinstance(found, list):
         return []
     out = []
@@ -169,7 +193,8 @@ def cameras(port, token):
         name = str(entry.get('name') or '').strip()
         if name:
             out.append({'name': name,
-                        'label': str(entry.get('label') or '').strip() or name})
+                        'label': str(entry.get('label') or '').strip() or name,
+                        'showing': bool(entry.get('showing'))})
     return out
 
 

@@ -3042,6 +3042,27 @@ class CameraPanel(QtWidgets.QFrame):
         return max(1, min(self.MAX_TILES,
                           int(getattr(Config, 'blueiris_max_cameras', self.MAX_TILES))))
 
+    def close_camera(self, camera):
+        """Take one camera off the grid. True if it was there to take off.
+
+        Same handling as a tile whose countdown ran out: the rest carry on and
+        the grid closes in around the gap.
+        """
+        tile = self._find(camera)
+        if tile is None:
+            return False
+        self.tiles.remove(tile)
+        tile.close()
+        if not self.tiles:
+            self.dismiss()
+        else:
+            self._relayout()
+        return True
+
+    def showing(self):
+        """Short names of the cameras currently on the grid."""
+        return [tile.camera for tile in self.tiles]
+
     def _on_expired(self, tile):
         """One camera's time is up. The rest carry on, and the grid closes in
         around the gap."""
@@ -3384,11 +3405,27 @@ class CommandListener(RequestLineServer):
         # lands, which is why the panel re-asks rather than showing "none".
         if params.get('do', '') == 'camera_list':
             try:
+                # The inventory is cached; which of them is on screen is not,
+                # so it is read fresh here. That is what lets each camera's
+                # button say whether it will show or dismiss.
+                live = {name.lower() for name in cameraPanel.showing()}
                 payload = json.dumps(
-                    cameraPanel.session.camera_list()).encode('utf-8')
+                    [dict(entry, showing=entry['name'].lower() in live)
+                     for entry in cameraPanel.session.camera_list()]
+                ).encode('utf-8')
             except Exception:
                 print('WARNING:', traceback.format_exc())
                 return '500 could not read the camera list'
+            return ('200 OK', 'application/json', payload)
+
+        # Which stream is playing, not just a sentence about it: the panel puts
+        # each stream's own button into Play or Stop, and matching on the name
+        # in that sentence would be guesswork.
+        if params.get('do', '') == 'audio_state':
+            payload = json.dumps({
+                'text': audio_status_text(),
+                'playing': audio_index if audio_player is not None else None,
+            }).encode('utf-8')
             return ('200 OK', 'application/json', payload)
 
         name = params.get('do', '')
@@ -4064,10 +4101,22 @@ def _cmd_camera_show(params):
 
 
 def _cmd_camera_hide(params):
-    if not cameraPanel.isVisible():
-        return True, 'no camera was on screen'
-    cameraPanel.dismiss()
-    return True, 'cameras dismissed'
+    """Close one named camera, or all of them when none is named."""
+    camera = (params.get('camera') or '').strip()
+    if not camera:
+        if not cameraPanel.isVisible():
+            return True, 'no camera was on screen'
+        cameraPanel.dismiss()
+        return True, 'cameras dismissed'
+    # Matched against what is actually on the grid rather than the Blue Iris
+    # list, so this closes what it says it closes even for a camera that has
+    # since been renamed or removed at the other end.
+    match = next((name for name in cameraPanel.showing()
+                  if name.lower() == camera.lower()), None)
+    if match is None:
+        return True, '%s was not on screen' % camera
+    cameraPanel.close_camera(match)
+    return True, 'closed %s' % match
 
 
 def _cmd_hide_alert(params):

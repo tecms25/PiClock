@@ -65,6 +65,20 @@ main { padding: 1.25rem; max-width: 1100px; margin: 0 auto; }
 
 .card.narrow { max-width: 22rem; margin: 3rem auto; }
 
+/* Audio and cameras side by side. Both are short lists of one-line controls,
+   so a single column left a lot of empty space to the right of each and pushed
+   the activity log off the screen. auto-fit collapses them back to one column
+   on a phone without a media query. Aligned to the start so the shorter card
+   keeps its own height instead of being stretched to match. */
+.card-pair {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(20rem, 1fr));
+  gap: 1rem;
+  align-items: start;
+}
+
+.card-pair > .card { margin-bottom: 1rem; }
+
 h2 {
   font-size: .8rem;
   text-transform: uppercase;

@@ -43,6 +43,32 @@
     audioBox.hidden = state === '';
   }
 
+  // Play/Show and Stop/Dismiss are one button, not two. `on` decides which:
+  // the accent fill and the stopping verb, or the grey outline and the
+  // starting one - and, so the button does what it says, which command it
+  // posts. Setting the command here is what makes the same form both start
+  // and stop, so it must stay in step with the label.
+  function setToggle(form, on, startWord, stopWord, startCommand, stopCommand) {
+    var button = form.querySelector('button');
+    var command = form.querySelector('input[name="command"]');
+    if (!button || !command) { return; }
+    button.textContent = on ? stopWord : startWord;
+    button.classList.toggle('secondary', !on);
+    command.value = on ? stopCommand : startCommand;
+  }
+
+  function renderAudioButtons(playing) {
+    var box = document.getElementById('audio-actions');
+    if (!box) { return; }
+    Array.prototype.forEach.call(box.querySelectorAll('form[data-stream]'),
+      function (form) {
+        var mine = Number(form.getAttribute('data-stream'));
+        setToggle(form, playing !== null && playing !== undefined
+                        && Number(playing) === mine,
+                  'Play', 'Stop', 'audio_play', 'audio_stop');
+      });
+  }
+
   function renderVolume(level) {
     // Ignored mid-drag: a poll landing while the slider is being moved would
     // otherwise yank it back to where it was a moment ago.
@@ -84,7 +110,12 @@
       }).then(function (r) {
         return r.ok ? r.json() : null;
       }).then(function (data) {
-        if (data) { renderAudio(data.state); renderVolume(data.volume); }
+        if (data) {
+          renderAudio(data.state);
+          renderAudioButtons(data.playing);
+          renderCameras(data.cameras);
+          renderVolume(data.volume);
+        }
       }).catch(function () { /* a blip; the next poll can try again */ });
     }, 5000);
   }
@@ -98,41 +129,65 @@
     var empty = document.getElementById('camera-empty');
     var count = document.getElementById('camera-count');
     if (!box || !cameras) { return false; }
-    if (Number(count && count.textContent) === cameras.length) {
-      return cameras.length > 0;
-    }
-    var dismiss = box.lastElementChild;
-    Array.prototype.slice.call(box.querySelectorAll('form')).forEach(
-      function (form) { if (form !== dismiss) { box.removeChild(form); } });
-    cameras.forEach(function (camera) {
-      var form = document.createElement('form');
-      form.method = 'post';
-      form.action = box.getAttribute('data-command-url') || '/command';
-      form.setAttribute('data-live', '');
-      // textContent throughout: a camera name comes from Blue Iris, and the
-      // page must not build markup out of it.
-      [['csrf', csrfToken()], ['command', 'camera_show'],
-       ['camera', camera.name]].forEach(function (pair) {
-        var field = document.createElement('input');
-        field.type = 'hidden';
-        field.name = pair[0];
-        field.value = pair[1];
-        form.appendChild(field);
+
+    // Rebuild only when the set of cameras changes. Which of them is on screen
+    // changes constantly and is just a button state, so redrawing the whole
+    // card for that would throw away a button mid-click.
+    var have = Array.prototype.map.call(
+      box.querySelectorAll('form[data-camera]'),
+      function (form) { return form.getAttribute('data-camera'); }).join('\n');
+    var want = cameras.map(function (c) { return c.name; }).join('\n');
+    if (have !== want) {
+      Array.prototype.slice.call(box.querySelectorAll('form[data-camera]'))
+        .forEach(function (form) { box.removeChild(form); });
+      cameras.forEach(function (camera) {
+        var form = document.createElement('form');
+        form.method = 'post';
+        form.action = box.getAttribute('data-command-url') || '/command';
+        form.setAttribute('data-live', '');
+        form.setAttribute('data-camera', camera.name);
+        // textContent and value assignment throughout: a camera name comes
+        // from Blue Iris, and the page must not build markup out of it.
+        [['csrf', csrfToken()], ['command', 'camera_show'],
+         ['camera', camera.name]].forEach(function (pair) {
+          var field = document.createElement('input');
+          field.type = 'hidden';
+          field.name = pair[0];
+          field.value = pair[1];
+          form.appendChild(field);
+        });
+        var button = document.createElement('button');
+        button.type = 'submit';
+        button.className = 'secondary';
+        button.textContent = 'Show';
+        form.appendChild(button);
+        var label = document.createElement('span');
+        label.className = 'muted';
+        label.textContent = camera.label || camera.name;
+        form.appendChild(label);
+        box.appendChild(form);
       });
-      var button = document.createElement('button');
-      button.type = 'submit';
-      button.className = 'secondary';
-      button.textContent = 'Show';
-      form.appendChild(button);
-      var label = document.createElement('span');
-      label.className = 'muted';
-      label.textContent = camera.label || camera.name;
-      form.appendChild(label);
-      box.insertBefore(form, dismiss);
+      if (count) { count.textContent = String(cameras.length); }
+      if (empty) { empty.hidden = cameras.length > 0; }
+    }
+
+    cameras.forEach(function (camera) {
+      var form = box.querySelector(
+        'form[data-camera="' + cssEscape(camera.name) + '"]');
+      if (form) {
+        setToggle(form, !!camera.showing, 'Show', 'Dismiss',
+                  'camera_show', 'camera_hide');
+      }
     });
-    if (count) { count.textContent = String(cameras.length); }
-    if (empty) { empty.hidden = cameras.length > 0; }
     return cameras.length > 0;
+  }
+
+  // Camera names come from Blue Iris and go into a selector. CSS.escape is not
+  // in every browser this panel might be opened from, so fall back to escaping
+  // the quote and backslash a name could realistically contain.
+  function cssEscape(value) {
+    if (window.CSS && window.CSS.escape) { return window.CSS.escape(value); }
+    return String(value).replace(/["\\]/g, '\\$&');
   }
 
   function csrfToken() {
@@ -210,7 +265,14 @@
     }).then(function (data) {
       show(data.message || 'Done.', !!data.ok);
       renderState(data.service);
-      renderAudio(data.audio);
+      // The reply carries the state as it is after the command, so the button
+      // just pressed flips to its other face straight away rather than waiting
+      // for the next poll.
+      if (data.audio) {
+        renderAudio(data.audio.text);
+        renderAudioButtons(data.audio.playing);
+      }
+      renderCameras(data.cameras);
       renderVolume(data.volume);
       renderActivity(data.events);
     }).catch(function () {

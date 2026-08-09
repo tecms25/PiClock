@@ -54,9 +54,11 @@
   {% endfor %}
 </div>
 
+<div class="card-pair">
+
 <div class="card">
   <h2>Audio streams <span class="count">{{ streams|length }}</span></h2>
-  <p class="state-line" id="audio-state" {% if not audio_state %}hidden{% endif %}>{{ audio_state }}</p>
+  <p class="state-line" id="audio-state" {% if not audio.text %}hidden{% endif %}>{{ audio.text }}</p>
 
   {% if volume_available %}
   <form method="post" action="{{ url_for('set_volume') }}" data-live class="volume">
@@ -72,22 +74,19 @@
   <p class="muted">Played through the Pi's own speakers. One at a time -
     starting another swaps it over. While something is playing the clock shows
     an indicator in its top right corner.</p>
-  <div class="actions">
+  <div class="actions" id="audio-actions">
     {% for s in streams %}
-    <form method="post" action="{{ url_for('command') }}" data-live>
+    {% set on = audio.playing == s.index %}
+    <form method="post" action="{{ url_for('command') }}" data-live
+          data-stream="{{ s.index }}">
       <input type="hidden" name="csrf" value="{{ csrf_token() }}">
-      <input type="hidden" name="command" value="audio_play">
+      <input type="hidden" name="command"
+             value="{{ 'audio_stop' if on else 'audio_play' }}">
       <input type="hidden" name="stream" value="{{ s.index }}">
-      <button type="submit" class="secondary">Play</button>
+      <button type="submit"{% if not on %} class="secondary"{% endif %}>{{ 'Stop' if on else 'Play' }}</button>
       <span class="muted">{{ s.name }}{% if s.hls %} <kbd>HLS</kbd>{% endif %}</span>
     </form>
     {% endfor %}
-    <form method="post" action="{{ url_for('command') }}" data-live>
-      <input type="hidden" name="csrf" value="{{ csrf_token() }}">
-      <input type="hidden" name="command" value="audio_stop">
-      <button type="submit">Stop</button>
-      <span class="muted">Silence whatever is playing.</span>
-    </form>
   </div>
   {% else %}
   <p class="muted">None configured. Set <code>noaastream</code> or
@@ -100,24 +99,20 @@
   <h2>Cameras <span class="count" id="camera-count">{{ cameras|length }}</span></h2>
   <p class="muted">Put a Blue Iris camera on the clock's screen, shown the same
     way a triggered alert is. It stays until you dismiss it - tapping the
-    clock's screen closes it too.</p>
+    clock's screen closes them all.</p>
   <div class="actions" id="camera-actions"
        data-command-url="{{ url_for('command') }}">
     {% for c in cameras %}
-    <form method="post" action="{{ url_for('command') }}" data-live>
+    <form method="post" action="{{ url_for('command') }}" data-live
+          data-camera="{{ c.name }}">
       <input type="hidden" name="csrf" value="{{ csrf_token() }}">
-      <input type="hidden" name="command" value="camera_show">
+      <input type="hidden" name="command"
+             value="{{ 'camera_hide' if c.showing else 'camera_show' }}">
       <input type="hidden" name="camera" value="{{ c.name }}">
-      <button type="submit" class="secondary">Show</button>
+      <button type="submit"{% if not c.showing %} class="secondary"{% endif %}>{{ 'Dismiss' if c.showing else 'Show' }}</button>
       <span class="muted">{{ c.label }}</span>
     </form>
     {% endfor %}
-    <form method="post" action="{{ url_for('command') }}" data-live>
-      <input type="hidden" name="csrf" value="{{ csrf_token() }}">
-      <input type="hidden" name="command" value="camera_hide">
-      <button type="submit">Dismiss</button>
-      <span class="muted">Close whatever cameras are on screen.</span>
-    </form>
   </div>
   <p class="muted" id="camera-empty" {% if cameras %}hidden{% endif %}>
     No cameras yet. The clock asks Blue Iris for the list in the background, so
@@ -125,6 +120,8 @@
     <code>blueiris_server</code>, <code>blueiris_user</code> and
     <code>blueiris_password</code> in
     <a href="{{ url_for('settings_page') }}">Settings</a>.</p>
+</div>
+
 </div>
 
 <div class="card">

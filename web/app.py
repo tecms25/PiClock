@@ -73,7 +73,7 @@ class QuietPolls(logging.Filter):
     the part anyone would want to see.
     """
 
-    POLLED = ('/api/audio', '/screenshot.jpg')
+    POLLED = ('/api/audio', '/api/cameras', '/screenshot.jpg')
 
     def filter(self, record):
         message = record.getMessage()
@@ -232,7 +232,9 @@ def create_app(settings=None, secrets_path=SECRETS, audit_db=AUDIT_DB):
                                streams=commands.streams(),
                                # Asked of the clock as the page is built; the
                                # page then polls /api/audio to keep it current.
-                               audio_state=audio_state(),
+                               # A dict: 'text' for the line above the buttons,
+                               # 'playing' for which button reads Stop.
+                               audio=audio_state(),
                                # Likewise, and for the same reason: the clock
                                # may not have the list yet, so /api/cameras
                                # fills the card in once it does.
@@ -275,7 +277,8 @@ def create_app(settings=None, secrets_path=SECRETS, audit_db=AUDIT_DB):
         """
         if wants_json():
             return jsonify({'ok': ok, 'message': message,
-                            'audio': audio_state(),
+                            'audio': audio_state(),  # {'text', 'playing'}
+                            'cameras': camera_list(),
                             'service': status.service_status(),
                             'events': audit.recent(audit_db)})
         flash(message, 'ok' if ok else 'error')
@@ -323,9 +326,8 @@ def create_app(settings=None, secrets_path=SECRETS, audit_db=AUDIT_DB):
         return outcome(ok, message, url_for('settings_page'))
 
     def audio_state():
-        return commands.send('audio_status',
-                             settings.get('web_command_port', 8128),
-                             app.config['COMMAND_TOKEN'])[1]
+        return commands.audio_state(settings.get('web_command_port', 8128),
+                                    app.config['COMMAND_TOKEN'])
 
     def camera_list():
         return commands.cameras(settings.get('web_command_port', 8128),
@@ -340,7 +342,10 @@ def create_app(settings=None, secrets_path=SECRETS, audit_db=AUDIT_DB):
         keeps asking rather than showing whatever was true at the time. The
         volume comes along so the slider follows a change made elsewhere.
         """
-        return jsonify({'state': audio_state(), 'volume': output_volume.get()})
+        state = audio_state()
+        return jsonify({'state': state['text'], 'playing': state['playing'],
+                        'cameras': camera_list(),
+                        'volume': output_volume.get()})
 
     @app.route('/volume', methods=['POST'])
     def set_volume():
@@ -349,7 +354,8 @@ def create_app(settings=None, secrets_path=SECRETS, audit_db=AUDIT_DB):
                      'ok' if ok else 'failed', message)
         if wants_json():
             return jsonify({'ok': ok, 'message': message, 'volume': level,
-                            'audio': audio_state(),
+                            'audio': audio_state(),  # {'text', 'playing'}
+                            'cameras': camera_list(),
                             'service': status.service_status(),
                             'events': audit.recent(audit_db)})
         flash(message, 'ok' if ok else 'error')
