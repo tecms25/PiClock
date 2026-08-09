@@ -1668,9 +1668,12 @@ def qtstart():
     objradar4.start(radar_refresh_interval)
 
     # Only page 1's radars animate at startup; radar3/4 start when that page
-    # is shown (see fixupframe()).
+    # is shown (see fixupframe()). Both page-1 radars run the whole time even
+    # though only one is on screen, so whichever is faded in next is already at
+    # the same point in the loop.
     objradar1.wxstart()
     objradar2.wxstart()
+    radarStack.start()
 
     ctimer = QtCore.QTimer()
     ctimer.timeout.connect(tick)
@@ -5472,6 +5475,104 @@ class Radar(QtWidgets.QLabel):
             self.maptimer = None
 
 
+RADAR_CROSSFADE_MS = 1000
+
+
+class RadarStack(QtWidgets.QWidget):
+    """Several radars sharing one slot, cross-dissolving between them.
+
+    Two zoom levels side by side take up half the left edge of the clock face.
+    Stacking them gives the same two views in the space of one, at the cost of
+    only seeing one at a time - which for a glanceable clock is the better
+    trade.
+
+    Every radar in the stack keeps running throughout: same tile fetches, same
+    wall-clock playback position (see Radar.rtick). The one being faded in is
+    therefore already showing the same moment of the loop as the one going out,
+    so the dissolve does not jump the animation. Nothing here touches fetching
+    or playback - only opacity and stacking order.
+    """
+
+    def __init__(self, parent, rect, seconds):
+        QtWidgets.QWidget.__init__(self, parent)
+        self.setObjectName('radarStack')
+        self.setStyleSheet('#radarStack { background-color: transparent; }')
+        self.setGeometry(rect)
+        self.seconds = seconds
+        self.radars = []
+        self.index = 0
+        self._anim = None
+        self.timer = None
+
+    def add(self, radar):
+        """Take a radar built against this stack's inner geometry."""
+        # Left disabled until a dissolve needs it: an enabled QGraphicsEffect
+        # makes the widget render through an offscreen pixmap on every repaint,
+        # which is not worth paying five times a second for a radar that is
+        # simply sitting there between transitions.
+        effect = QtWidgets.QGraphicsOpacityEffect(radar)
+        effect.setOpacity(1.0)
+        effect.setEnabled(False)
+        radar.setGraphicsEffect(effect)
+        radar.setVisible(not self.radars)  # only the first one starts shown
+        self.radars.append(radar)
+
+    def start(self):
+        if self.seconds <= 0 or len(self.radars) < 2:
+            return  # a single view, held indefinitely
+        self.timer = QtCore.QTimer(self)
+        self.timer.timeout.connect(self.advance)
+        self.timer.start(int(self.seconds * 1000))
+
+    def stop(self):
+        if self.timer is not None:
+            self.timer.stop()
+            self.timer = None
+
+    def advance(self):
+        """Dissolve to the next radar in the stack."""
+        if len(self.radars) < 2:
+            return
+        if self._anim is not None:
+            # A dissolve is still running. Land it before starting another, or
+            # the radar underneath is left visible behind the new fade.
+            self._anim.stop()  # DeletionPolicy disposes of it
+            self._settle()
+
+        self.index = (self.index + 1) % len(self.radars)
+        incoming = self.radars[self.index]
+
+        # Every radar fills the slot edge to edge and is opaque, so fading the
+        # incoming one in over the top dissolves cleanly. Counter-fading the
+        # outgoing one at the same time would thin both at the midpoint and let
+        # the slideshow show through the middle of the transition.
+        effect = incoming.graphicsEffect()
+        effect.setEnabled(True)
+        effect.setOpacity(0.0)
+        incoming.show()
+        incoming.raise_()  # within this stack only; siblings are all radars
+
+        anim = QtCore.QPropertyAnimation(effect, b'opacity', self)
+        anim.setDuration(RADAR_CROSSFADE_MS)
+        anim.setStartValue(0.0)
+        anim.setEndValue(1.0)
+        anim.setEasingCurve(QtCore.QEasingCurve.Type.InOutQuad)
+        anim.finished.connect(self._settle)
+        self._anim = anim
+        anim.start(QtCore.QAbstractAnimation.DeletionPolicy.DeleteWhenStopped)
+
+    def _settle(self):
+        """Leave exactly the current radar showing, with no effect in the way."""
+        for i, radar in enumerate(self.radars):
+            current = (i == self.index)
+            radar.setVisible(current)
+            effect = radar.graphicsEffect()
+            if effect is not None:
+                effect.setOpacity(1.0)
+                effect.setEnabled(False)
+        self._anim = None
+
+
 def realquit():
     QtWidgets.QApplication.exit(0)
 
@@ -5491,6 +5592,7 @@ def myquit(signum, frame):
             print('WARNING: while shutting down (%s):' % what)
             print(traceback.format_exc())
 
+    attempt('radar stack', radarStack.stop)
     for name, radar in (('radar1', objradar1), ('radar2', objradar2),
                         ('radar3', objradar3), ('radar4', objradar4)):
         attempt(name, radar.stop)
@@ -5674,6 +5776,13 @@ try:
     Config.prevent_screen_sleep
 except AttributeError:
     Config.prevent_screen_sleep = 1
+
+try:
+    Config.radar_cycle_seconds
+except AttributeError:
+    # How long each page-1 zoom level is held before dissolving to the other.
+    # 0 holds the first one and never cycles.
+    Config.radar_cycle_seconds = 20
 
 # Off unless a config asks for it, so existing installs are unchanged and
 # nobody starts polling a third-party feed without opting in.
@@ -5906,11 +6015,18 @@ clockface.setAlignment(Qt.AlignmentFlag.AlignCenter)
 clockface.setGeometry(clockrect)
 add_text_shadow(clockface)
 
-radar1rect = QtCore.QRect(int(3 * xscale), int(344 * yscale), int(300 * xscale), int(275 * yscale))
-objradar1 = Radar(foreGround, Config.radar1, radar1rect, 'radar1')
-
-radar2rect = QtCore.QRect(int(3 * xscale), int(622 * yscale), int(300 * xscale), int(275 * yscale))
-objradar2 = Radar(foreGround, Config.radar2, radar2rect, 'radar2')
+# Both page-1 zoom levels share the lower left slot and cross-dissolve between
+# each other, rather than taking a block each down the left edge.
+radarStackRect = QtCore.QRect(int(3 * xscale), int(622 * yscale), int(300 * xscale), int(275 * yscale))
+radarStack = RadarStack(foreGround, radarStackRect, Config.radar_cycle_seconds)
+# Each radar fills the stack, so it is built against the stack's own geometry
+# rather than the screen's. Radar uses the rect's size for the map image and
+# tile grid, so both views stay exactly as detailed as they were before.
+radarInnerRect = QtCore.QRect(0, 0, radarStackRect.width(), radarStackRect.height())
+objradar1 = Radar(radarStack, Config.radar1, radarInnerRect, 'radar1')
+objradar2 = Radar(radarStack, Config.radar2, radarInnerRect, 'radar2')
+radarStack.add(objradar1)
+radarStack.add(objradar2)
 
 radar3rect = QtCore.QRect(int(13 * xscale), int(50 * yscale), int(700 * xscale), int(700 * yscale))
 objradar3 = Radar(frame2, Config.radar3, radar3rect, 'radar3')

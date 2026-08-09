@@ -175,6 +175,9 @@ map_overlay = ''  # optional custom overlay style (labels/roads/borders only); b
 # Localization Variables
 metric = 0  # 0 = English, 1 = Metric
 radar_refresh = 10  # Radar refresh interval in minutes
+# Page 1 shows its two radar zoom levels in one slot, dissolving between
+# them. This is how long each is held, in seconds. 0 shows only the first.
+radar_cycle_seconds = 20
 weather_refresh = 15  # Current and Forecast WX refresh interval in minutes
 wind_degrees = 0 # Wind in 360 degrees instead of cardinal 0 = cardinal, 1 = degrees
 pressure_mbar = 0 # Override pressure units in millibars, mbar, instead of inches Mercury, inHg, (0 = inHg, 1 = mbar)
