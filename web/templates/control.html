@@ -19,8 +19,7 @@
 <div class="card">
   <h2>Actions</h2>
   {% if not available %}
-  <p class="muted">systemd user services are not available on this machine, so
-    these cannot be run from here.</p>
+  <p class="muted">systemd user services are not available here.</p>
   {% endif %}
   <div class="actions">
     {% for a in actions %}
@@ -29,8 +28,8 @@
       <input type="hidden" name="csrf" value="{{ csrf_token() }}">
       <input type="hidden" name="action" value="{{ a.name }}">
       <button type="submit" class="{{ 'danger' if a.danger }}"
-              {% if not available %}disabled{% endif %}>{{ a.label }}</button>
-      <span class="muted">{{ a.describe }}</span>
+              {% if not available %}disabled{% endif %}
+              title="{{ a.describe }}">{{ a.label }}</button>
     </form>
     {% endfor %}
   </div>
@@ -38,8 +37,6 @@
 
 <div class="card">
   <h2>Live commands</h2>
-  <p class="muted">These take effect on the screen straight away - nothing
-    restarts. They are the same things the clock's own keys do.</p>
   {% for group, items in live %}
   <h3>{{ group }}</h3>
   <div class="commands">
@@ -75,9 +72,6 @@
   </form>
   {% endif %}
   {% if streams %}
-  <p class="muted">Played through the Pi's own speakers. One at a time -
-    starting another swaps it over. While something is playing the clock shows
-    an indicator in its top right corner.</p>
   <div class="actions" id="audio-actions">
     {% for s in streams %}
     {% set on = audio.playing == s.index %}
@@ -93,17 +87,13 @@
     {% endfor %}
   </div>
   {% else %}
-  <p class="muted">None configured. Set <code>noaastream</code> or
-    <code>audio_streams</code> in
+  <p class="muted">None configured -
     <a href="{{ url_for('settings_page') }}">Settings</a>.</p>
   {% endif %}
 </div>
 
 <div class="card">
   <h2>Cameras <span class="count" id="camera-count">{{ cameras|length }}</span></h2>
-  <p class="muted">Put a Blue Iris camera on the clock's screen, shown the same
-    way a triggered alert is. It stays until you dismiss it - tapping the
-    clock's screen closes them all.</p>
   <div class="actions" id="camera-actions"
        data-command-url="{{ url_for('command') }}">
     {% for c in cameras %}
@@ -119,10 +109,7 @@
     {% endfor %}
   </div>
   <p class="muted" id="camera-empty" {% if cameras %}hidden{% endif %}>
-    No cameras yet. The clock asks Blue Iris for the list in the background, so
-    this fills in shortly after it starts; if it stays empty, check
-    <code>blueiris_server</code>, <code>blueiris_user</code> and
-    <code>blueiris_password</code> in
+    None found - check <code>blueiris_*</code> in
     <a href="{{ url_for('settings_page') }}">Settings</a>.</p>
 </div>
 
