@@ -531,9 +531,16 @@ def apply_brightness(percent):
     if abs(percent - last_brightness_percent) < 0.5:
         return
     last_brightness_percent = percent
-    alpha = int(round(255 * (1 - percent / 100.0)))
+    # Written as a 0-1 fraction rather than 0-255. Qt reads a bare integer
+    # alpha as 0-255 for every value except exactly 1, which it takes as the
+    # CSS fraction 1.0 - fully opaque. Dimming produces that 1 on the way past
+    # 99.5% brightness, which blacked the entire screen out for one step of the
+    # schedule (about 23 seconds) at every dusk and dawn transition. A fraction
+    # is read the same way across the whole range; a percentage is not, and
+    # misreads small values the same way.
     brightness_overlay.setStyleSheet(
-        '#brightness_overlay { background-color: rgba(0, 0, 0, %d); }' % alpha)
+        '#brightness_overlay { background-color: rgba(0, 0, 0, %.4f); }'
+        % (1.0 - percent / 100.0))
 
 
 def _macos_declare_user_active():
