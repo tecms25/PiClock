@@ -163,15 +163,29 @@ def api_cache_read(url, max_age_seconds):
         return None
     try:
         with open(path, 'rb') as f:
-            return f.read()
+            data = f.read()
     except OSError:
         return None
+    # A zero-length entry is a miss, not an empty answer. Returning b'' here
+    # reads as a hit, so the caller never goes near the network and fails to
+    # parse nothing at all - for as long as the entry stays inside max_age.
+    return data or None
 
 
 def api_cache_write(url, data):
+    # An empty body is never worth keeping, and storing one poisons the cache
+    # for the whole of its max_age.
+    if not data:
+        return
+    path = api_cache_path(url)
     try:
-        with open(api_cache_path(url), 'wb') as f:
+        # Written aside and renamed into place: a write cut short - a Pi losing
+        # power, a full disk - then leaves the previous entry alone instead of a
+        # truncated one that still looks fresh.
+        partial = path + '.part'
+        with open(partial, 'wb') as f:
             f.write(data)
+        os.replace(partial, path)
     except OSError as e:
         print(f'WARNING: unable to write API cache for {url}: {e}')
 
@@ -806,6 +820,15 @@ def wxfinished_tm_current(data=None):
     if data is None:
         wxreply.deleteLater()
         data = bytes(wxreply.readAll())
+        # Checked before caching, as the METAR and radar handlers already
+        # do. A failed reply hands back an empty body, and storing that
+        # left every read for the next refresh interval parsing nothing -
+        # which is exactly what a Pi booting before its network is up
+        # would write, and then live with.
+        if wxreply.error() != QNetworkReply.NetworkError.NoError:
+            print('ERROR: Response from api.tomorrow.io: '
+                  + (wxreply.errorString() or str(data, 'utf-8')))
+            return
         api_cache_write(wxreply.url().toString(), data)
     wxstr = str(data, 'utf-8')
 
@@ -887,6 +910,15 @@ def wxfinished_tm_hourly(data=None):
     if data is None:
         wxreply2.deleteLater()
         data = bytes(wxreply2.readAll())
+        # Checked before caching, as the METAR and radar handlers already
+        # do. A failed reply hands back an empty body, and storing that
+        # left every read for the next refresh interval parsing nothing -
+        # which is exactly what a Pi booting before its network is up
+        # would write, and then live with.
+        if wxreply2.error() != QNetworkReply.NetworkError.NoError:
+            print('ERROR: Response from api.tomorrow.io: '
+                  + (wxreply2.errorString() or str(data, 'utf-8')))
+            return
         api_cache_write(wxreply2.url().toString(), data)
     wxstr2 = str(data, 'utf-8')
 
@@ -991,6 +1023,15 @@ def wxfinished_tm_daily(data=None):
     if data is None:
         wxreply3.deleteLater()
         data = bytes(wxreply3.readAll())
+        # Checked before caching, as the METAR and radar handlers already
+        # do. A failed reply hands back an empty body, and storing that
+        # left every read for the next refresh interval parsing nothing -
+        # which is exactly what a Pi booting before its network is up
+        # would write, and then live with.
+        if wxreply3.error() != QNetworkReply.NetworkError.NoError:
+            print('ERROR: Response from api.tomorrow.io: '
+                  + (wxreply3.errorString() or str(data, 'utf-8')))
+            return
         api_cache_write(wxreply3.url().toString(), data)
     wxstr3 = str(data, 'utf-8')
 
