@@ -1,4 +1,4 @@
-python-dateutil>=2.9.0
+python-dateutil>=3.0.0
 metar>=2.0.1
 pytz>=2026.3.post1
 tzlocal>=5.4.4
